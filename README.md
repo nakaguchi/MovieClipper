@@ -92,4 +92,4 @@ python movie_clipper.py movie.ts --no_deinterlace
 
 ## ライセンス
 
-[ライセンス情報をここに記載]
+MIT
