@@ -548,7 +548,7 @@ def main():
     parser.add_argument("--max_gap_sec", type=float, default=0.15, help="抽出区間の結合最大ギャップ時間（秒）。これ以下のギャップは結合される。規定値 0.15")
 
     parser.add_argument("--fps", type=float, default=0.0, help="入力動画のFPSを強制指定（0.0で自動検出）規定値 0.0")
-    parser.add_argument("--bitrate", default="1700k", help="出力動画のビットレート設定（libx264）。例: 5000k, 8000k など。値が大きいほど高品質・大容量。一般的には3000k〜10000k程度が無難です。規定値 1700k")
+    parser.add_argument("--bitrate", default="2000k", help="出力動画のビットレート設定（libx264）。例: 5000k, 8000k など。値が大きいほど高品質・大容量。一般的には3000k〜10000k程度が無難です。規定値 2000k")
     parser.add_argument("--preset", default="medium", help="出力動画のエンコードプリセット（libx264）。品質には影響しないが、速度と圧縮率に影響する。ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow から選択。規定値 medium")
     parser.add_argument("--audio_bitrate", default="192k", help="出力音声ビットレート（AAC）。規定値 192k")
 
