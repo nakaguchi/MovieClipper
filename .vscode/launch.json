@@ -9,7 +9,7 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
-            "args": ["D:\\usr\\DL\\video\\AO2026\\AO2026_MSQ1R_Watanuki_Kjaer.ts"],
+            "args": ["D:\\usr\\DL\\video\\AO2026\\AO2026_MSQ1R_Watanuki_Kjaer_edit.ts"],
             "console": "integratedTerminal"
         }
     ]

@@ -18,6 +18,9 @@ import cv2
 import numpy as np
 from skimage.metrics import structural_similarity as ssim
 
+# Version
+__version__ = "1.2"
+
 
 # -----------------------------
 # small helpers
@@ -565,6 +568,8 @@ def export_with_ffmpeg(
 def main():
     parser = argparse.ArgumentParser()
 
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+
     parser.add_argument("input", help="入力動画ファイル")
     parser.add_argument("--ref", default="", help="参照フレーム画像（省略時: 入力拡張子を .jpg に置換）")
     parser.add_argument("--output", default="", help="出力 mp4（省略時: 入力に応じて自動決定）")
@@ -693,6 +698,6 @@ def main():
 
 
 if __name__ == "__main__":
-    print(f"Starting at {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"MovieClipper v{__version__} - Starting at {time.strftime('%Y-%m-%d %H:%M:%S')}")
     main()
     print(f"Finished at {time.strftime('%Y-%m-%d %H:%M:%S')}")
