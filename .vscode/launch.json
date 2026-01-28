@@ -9,7 +9,7 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
-            "args": ["testdata/movie.ts"],
+            "args": ["D:\\usr\\DL\\video\\AO2026\\AO2026_MSQ1R_Watanuki_Kjaer.ts"],
             "console": "integratedTerminal"
         }
     ]

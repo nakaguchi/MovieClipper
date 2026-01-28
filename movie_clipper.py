@@ -7,6 +7,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -375,6 +376,7 @@ def run_ffmpeg_with_progress(cmd: List[str], total_duration_sec: Optional[float]
         # 念のため
         cmd = cmd[:-1] + ["-progress", "pipe:1", "-nostats"] + cmd[-1:]
 
+    # print(f"Running ffmpeg command: {' '.join(cmd)}")
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
 
     last_print_t = time.time()
@@ -493,37 +495,71 @@ def export_with_ffmpeg(
 
     filter_complex = ";".join(parts)
 
-    cmd = [
-        exec,
-        "-y",
-        "-i", input_path,
-        "-filter_complex", filter_complex,
-        "-map", "[vout]",
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
-        "-preset", preset,
-        "-b:v", bitrate,
-    ]
+    # フィルタコンプレックスが長い場合、テンポラリファイルに保存して -filter_complex_script で渡す
+    # これによりコマンドライン長制限を回避できる
+    use_filter_script = len(filter_complex) > 4000
 
-    if audio_present:
-        cmd += [
-            "-map", "[aout]",
-            "-c:a", "aac",
-            "-b:a", audio_bitrate,
+    filter_script_file = None
+    try:
+        if use_filter_script:
+            # テンポラリファイルにフィルタを書き込む
+            fd, filter_script_file = tempfile.mkstemp(suffix=".txt", prefix="ffmpeg_filter_", text=True)
+            # print(f"Using temporary filter script file: {filter_script_file}")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(filter_complex)
+            except:
+                os.close(fd)
+                raise
+
+        cmd = [
+            exec,
+            "-y",
+            "-i", input_path,
         ]
-    else:
-        cmd += ["-an"]
 
-    cmd += [
-        "-movflags", "+faststart",
-        "-progress", "pipe:1",
-        "-nostats",
-        output_path,
-    ]
+        # フィルタをコマンドに追加（方法1: スクリプトファイル、方法2: 直接）
+        if use_filter_script:
+            cmd += ["-filter_complex_script", filter_script_file]
+        else:
+            cmd += ["-filter_complex", filter_complex]
 
-    # 実出力は抽出後の合成なので、total_duration_sec は「入力尺」だと100%表示にズレます。
-    # ただしユーザ要件は「バーと%」の表示なので、便宜上 input duration を使用します。
-    run_ffmpeg_with_progress(cmd, total_duration_sec=total_duration_sec, label="output")
+        cmd += [
+            "-map", "[vout]",
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-preset", preset,
+            "-b:v", bitrate,
+        ]
+
+        if audio_present:
+            cmd += [
+                "-map", "[aout]",
+                "-c:a", "aac",
+                "-b:a", audio_bitrate,
+            ]
+        else:
+            cmd += ["-an"]
+
+        cmd += [
+            "-movflags", "+faststart",
+            "-progress", "pipe:1",
+            "-nostats",
+            output_path,
+        ]
+
+        # 実出力は抽出後の合成なので、total_duration_sec は「入力尺」だと100%表示にズレます。
+        # ただしユーザ要件は「バーと%」の表示なので、便宜上 input duration を使用します。
+        run_ffmpeg_with_progress(cmd, total_duration_sec=total_duration_sec, label="output")
+
+    finally:
+        # テンポラリファイルを削除
+        if filter_script_file and os.path.exists(filter_script_file):
+            try:
+                os.remove(filter_script_file)
+            except:
+                pass
+
 
 
 def main():
