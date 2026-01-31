@@ -115,13 +115,13 @@ def match_template_by_features(
     frame_bgr: np.ndarray,
     kp_ref: List[cv2.KeyPoint],
     desc_ref: np.ndarray,
-    sift: object,
+    detector: object,
     feature_threshold: float = 0.7,
     visualize: bool = False,
 ) -> float:
     """
     特徴点マッチングで参照フレームが入力フレーム内の一部に含まれるかを判定する。
-    SIFT特徴点を使用し、ハモグラフィ行列の確立度をスコアとして返す。
+    ORB 特徴点を使用し、ホモグラフィ行列の確立度をスコアとして返す。
     
     Args:
         ref_bgr: 参照フレーム（BGR）
@@ -136,18 +136,22 @@ def match_template_by_features(
         frame_gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
         frame_gray = cv2.resize(frame_gray, FM_SIZE, interpolation=cv2.INTER_AREA)  # crop to match ref frame size
 
-        # 受け取った SIFT 実装を使ってフレーム側のキーポイント・記述子を計算
-        kp_frame, desc_frame = sift.detectAndCompute(frame_gray, None)
+        # 受け取った ORB 実装を使ってフレーム側のキーポイントを検出
+        # その後キー点角度を0にして compute を呼び、回転補正を無効化する
+        kp_frame = detector.detect(frame_gray, None)
+        for kp in kp_frame:
+            kp.angle = 0.0
+        if kp_frame:
+            kp_frame, desc_frame = detector.compute(frame_gray, kp_frame)
+        else:
+            desc_frame = None
         
         # マッチング対象がない場合
         if desc_frame is None or len(kp_ref) < 4 or len(kp_frame) < 4:
             return 0.0
         
-        # FLANN ベースのマッチャーを使用（高速）
-        FLANN_INDEX_KDTREE = 1
-        index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-        search_params = dict(checks=50)
-        matcher = cv2.FlannBasedMatcher(index_params, search_params)
+        # ORB 用の BFMatcher（ハミング距離）を使用
+        matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
         
         # knn マッチング（各特徴点に対して最も近い2つのマッチを取得）
         matches = matcher.knnMatch(desc_ref, desc_frame, k=2)
@@ -182,12 +186,16 @@ def match_template_by_features(
         if visualize:
             try:
                 ref_disp = cv2.resize(ref_bgr, FM_SIZE, interpolation=cv2.INTER_AREA)
+                for kp in kp_ref:
+                    cv2.circle(ref_disp, (int(kp.pt[0]), int(kp.pt[1])), 2, (0, 255, 0), -1)
                 frame_disp = cv2.resize(frame_bgr, FM_SIZE, interpolation=cv2.INTER_AREA)
+                for kp in kp_frame:
+                    cv2.circle(frame_disp, (int(kp.pt[0]), int(kp.pt[1])), 2, (0, 255, 0), -1)
                 img_matches = cv2.drawMatches(ref_disp, kp_ref, frame_disp, kp_frame, good_matches, None, flags=2)
                 txt = f"score={score:.3f} inliers={int(inliers)}/{len(good_matches)}"
                 cv2.putText(img_matches, txt, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
                 cv2.imshow("feature_matches", img_matches)
-                cv2.waitKey(1)
+                cv2.waitKey(0)
             except Exception:
                 pass
         
@@ -332,13 +340,20 @@ def analyze_segments(
     ref_ssim_gray = preprocess_for_ssim(ref_bgr, size=ssim_size)
 
     # 部分一致モード向け: 参照フレームの特徴量は最初に一度だけ計算する
-    sift = None
+    detector = None
     kp_ref = None
     desc_ref = None
     if partial_match:
-        sift = cv2.SIFT_create()
+        detector = cv2.ORB_create(nfeatures=1500)
         ref_gray_feat = cv2.resize(cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY), FM_SIZE, interpolation=cv2.INTER_AREA)
-        kp_ref, desc_ref = sift.detectAndCompute(ref_gray_feat, None)
+        # detect then compute with rotation normalization disabled (force angle=0)
+        kp_ref = detector.detect(ref_gray_feat, None)
+        for kp in kp_ref:
+            kp.angle = 0.0
+        if kp_ref:
+            kp_ref, desc_ref = detector.compute(ref_gray_feat, kp_ref)
+        else:
+            desc_ref = None
 
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
@@ -422,7 +437,7 @@ def analyze_segments(
                     frame,
                     kp_ref,
                     desc_ref,
-                    sift,
+                    detector,
                     feature_threshold=feature_threshold,
                     visualize=visual,
                 )
