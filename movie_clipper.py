@@ -119,6 +119,7 @@ def match_template_by_features(
     feature_threshold: float = 0.7,
     visualize: bool = False,
     angle_tol: float = 15.0,
+    min_good_matches: int = 4,
 ) -> float:
     """
     特徴点マッチングで参照フレームが入力フレーム内の一部に含まれるかを判定する。
@@ -141,7 +142,7 @@ def match_template_by_features(
         kp_frame, desc_frame = detector.detectAndCompute(frame_gray, None)
         
         # マッチング対象がない場合
-        if desc_frame is None or len(kp_ref) < 4 or len(kp_frame) < 4:
+        if desc_frame is None or len(kp_ref) < min_good_matches or len(kp_frame) < min_good_matches:
             return 0.0
         
         # ORB 用の BFMatcher（ハミング距離）を使用
@@ -169,7 +170,7 @@ def match_template_by_features(
             good_matches = filtered
         
         # 十分なマッチが見つからない場合
-        if len(good_matches) < 4:
+        if len(good_matches) < min_good_matches:
             return 0.0
         
         # マッチした特徴点を抽出
@@ -322,8 +323,8 @@ def analyze_segments(
     fps_override: float,
     phash_maxdist: int,
     ssim_size: int,
-    ssim_enter: float,
-    ssim_exit: float,
+    match_enter: float,
+    match_leave: float,
     smooth_sec: float,
     preroll_sec: float,
     postroll_sec: float,
@@ -334,6 +335,7 @@ def analyze_segments(
     feature_threshold: float = 0.7,
     frame_skip: int = 0,
     visual: bool = False,
+    min_good_matches: int = 4,
     progress_interval_sec: float = 0.2,
 ) -> Tuple[List[Segment], float]:
     ref_bgr = cv2.imread(ref_image_path, cv2.IMREAD_COLOR)
@@ -438,6 +440,7 @@ def analyze_segments(
                     detector,
                     feature_threshold=feature_threshold,
                     visualize=visual,
+                    min_good_matches=min_good_matches,
                 )
                 score_for_smoothing = feature_match_score
             else:
@@ -463,10 +466,10 @@ def analyze_segments(
             ema = alpha * score_for_smoothing + (1.0 - alpha) * ema
 
             # hysteresis
-            if (not in_segment) and (ema >= ssim_enter):
+            if (not in_segment) and (ema >= match_enter):
                 in_segment = True
                 seg_start_frame = max(0, frame_idx - preroll_frames)
-            elif in_segment and (ema <= ssim_exit):
+            elif in_segment and (ema <= match_leave):
                 in_segment = False
                 seg_end_frame = frame_idx + postroll_frames
                 start = seg_start_frame / fps
@@ -750,8 +753,8 @@ def main():
 
     parser.add_argument("--phash_maxdist", type=int, default=12, help="pHash ハミング距離閾値。大きくすると候補が増える（SSIM計算が増える）。固定カメラなら 8〜14 付近から調整が無難です。規定値 12")
     parser.add_argument("--ssim_size", type=int, default=256, help="SSIM 計算用にリサイズするサイズ（正方形）。大きくすると精度が上がるが計算コストも増える。256〜512 程度が無難です。規定値 256")
-    parser.add_argument("--ssim_enter", type=float, default=0.78, help="SSIM しきい値（入る側）。この値以上で抽出区間に入る。規定値 0.78")
-    parser.add_argument("--ssim_exit", type=float, default=0.72, help="SSIM しきい値（出る側）。この値以下で抽出区間から出る。規定値 0.72")
+    parser.add_argument("--match_enter", type=float, default=0.78, help="マッチ進入閾値（入る側）。この値以上で抽出区間に入る。規定値 0.78")
+    parser.add_argument("--match_leave", type=float, default=0.72, help="マッチ退出閾値（出る側）。この値以下で抽出区間から出る。規定値 0.72")
 
     parser.add_argument("--smooth_sec", type=float, default=0.5, help="SSIM スコアの平滑化ウィンドウ時間（秒）。大きくするとノイズに強くなるが応答が遅くなる。規定値 0.5")
     parser.add_argument("--preroll_sec", type=float, default=0.2, help="抽出区間の前に追加する余裕時間（秒）。規定値 0.2")
@@ -771,10 +774,11 @@ def main():
 
     parser.add_argument("--visual", action="store_true", help="一致計算中の処理画像を表示する（デバッグ用）")
 
-    parser.add_argument("--frame_skip", type=int, default=0, help="各処理フレームの後にスキップするフレーム数（0で無効）。例: 2 は各処理後に2フレームをスキップ）")
+    parser.add_argument("--frame_skip", type=int, default=1, help="各処理フレームの後にスキップするフレーム数（0で無効）。例: 2 は各処理後に2フレームをスキップ）")
 
     parser.add_argument("--partial_match", action="store_true", help="部分一致モード: 参照フレームが入力フレーム内の一部に含まれる場合を検出（特徴点マッチング使用）")
-    parser.add_argument("--feature_threshold", type=float, default=0.7, help="特徴点マッチングの信頼度閾値（0.0～1.0）。小さくすると検出が容易になる。規定値 0.7")
+    parser.add_argument("--feature_threshold", type=float, default=0.8, help="特徴点マッチングの信頼度閾値（0.0～1.0）。小さくすると検出が容易になる。規定値 0.7")
+    parser.add_argument("--min_good_matches", type=int, default=15, help="ホモグラフィ計算に必要な最小マッチ数。4以上である必要があります。規定値 4")
 
     args = parser.parse_args()
 
@@ -828,8 +832,8 @@ def main():
         fps_override=args.fps,
         phash_maxdist=args.phash_maxdist,
         ssim_size=args.ssim_size,
-        ssim_enter=args.ssim_enter,
-        ssim_exit=args.ssim_exit,
+        match_enter=args.match_enter,
+        match_leave=args.match_leave,
         smooth_sec=args.smooth_sec,
         preroll_sec=args.preroll_sec,
         postroll_sec=args.postroll_sec,
@@ -840,6 +844,7 @@ def main():
         feature_threshold=args.feature_threshold,
         frame_skip=args.frame_skip,
         visual=args.visual,
+        min_good_matches=args.min_good_matches,
         progress_interval_sec=args.progress_interval,
     )
 
@@ -850,8 +855,8 @@ def main():
             "partial_match": args.partial_match,
             "feature_threshold": args.feature_threshold if args.partial_match else "",
             "phash_maxdist": args.phash_maxdist if not args.partial_match else "",
-            "ssim_enter": args.ssim_enter,
-            "ssim_exit": args.ssim_exit,
+            "match_enter": args.match_enter,
+            "match_leave": args.match_leave,
             "smooth_sec": args.smooth_sec,
             "preroll_sec": args.preroll_sec,
             "postroll_sec": args.postroll_sec,

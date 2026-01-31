@@ -11,9 +11,9 @@
             "program": "${file}",
             "args": ["D:\\usr\\DL\\video\\AO2026\\AO2026_MS1R_Zheng_Korda.ts", 
                 "--ref", "D:\\usr\\DL\\video\\AO2026\\court.jpg",
-                "--partial_match", "--feature_threshold", "0.8", "--visual",
-                "--frame_skip", "3", "--frame_csv",
-                "--ssim_enter", "0.7", "--ssim_exit", "0.6"],
+                "--partial_match", "--feature_threshold", "0.8", "--visual", "--min_good_matches", "15",
+                "--frame_skip", "1", "--frame_csv",
+                "--ssim_enter", "0.6", "--ssim_exit", "0.5"],
             "console": "integratedTerminal"
         }
     ]
