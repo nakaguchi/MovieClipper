@@ -19,7 +19,7 @@ import numpy as np
 from skimage.metrics import structural_similarity as ssim
 
 # Version
-__version__ = "1.2"
+__version__ = "1.3"
 
 
 # -----------------------------
@@ -105,6 +105,85 @@ def preprocess_for_ssim(frame_bgr: np.ndarray, size: int = 256) -> np.ndarray:
 
 def compute_ssim(a_gray: np.ndarray, b_gray: np.ndarray) -> float:
     return float(ssim(a_gray, b_gray, data_range=255))
+
+
+# -----------------------------
+# 特徴点マッチング（部分一致検出用）
+# -----------------------------
+def match_template_by_features(
+    ref_bgr: np.ndarray,
+    frame_bgr: np.ndarray,
+    feature_threshold: float = 0.7,
+) -> float:
+    """
+    特徴点マッチングで参照フレームが入力フレーム内の一部に含まれるかを判定する。
+    SIFT特徴点を使用し、ハモグラフィ行列の確立度をスコアとして返す。
+    
+    Args:
+        ref_bgr: 参照フレーム（BGR）
+        frame_bgr: 入力フレーム（BGR）
+        feature_threshold: 特徴点マッチングの信頼度閾値
+    
+    Returns:
+        マッチスコア（0.0～1.0）。高いほどマッチしている。
+    """
+    try:
+        # グレースケール変換
+        ref_gray = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY)
+        frame_gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+        frame_gray = frame_gray[240:540,320:1600]  # crop to match ref frame size
+        
+        # SIFT初期化
+        sift = cv2.SIFT_create()
+        
+        # キーポイントと記述子を検出
+        kp_ref, desc_ref = sift.detectAndCompute(ref_gray, None)
+        kp_frame, desc_frame = sift.detectAndCompute(frame_gray, None)
+        
+        # マッチング対象がない場合
+        if desc_ref is None or desc_frame is None or len(kp_ref) < 4 or len(kp_frame) < 4:
+            return 0.0
+        
+        # FLANN ベースのマッチャーを使用（高速）
+        FLANN_INDEX_KDTREE = 1
+        index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
+        search_params = dict(checks=50)
+        matcher = cv2.FlannBasedMatcher(index_params, search_params)
+        
+        # knn マッチング（各特徴点に対して最も近い2つのマッチを取得）
+        matches = matcher.knnMatch(desc_ref, desc_frame, k=2)
+        
+        # Lowe's ratio test で良いマッチのみ選別
+        good_matches = []
+        for m_n in matches:
+            if len(m_n) == 2:
+                m, n = m_n
+                if m.distance < feature_threshold * n.distance:
+                    good_matches.append(m)
+        
+        # 十分なマッチが見つからない場合
+        if len(good_matches) < 4:
+            return 0.0
+        
+        # マッチした特徴点を抽出
+        src_pts = np.float32([kp_ref[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        dst_pts = np.float32([kp_frame[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        
+        # ホモグラフィ行列を計算（RANSACを使用）
+        H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+        
+        if H is None:
+            return 0.0
+        
+        # RANSAC でのインライアの比率をスコアとする
+        inliers = np.sum(mask)
+        score = float(inliers) / float(len(good_matches))
+        
+        return score
+        
+    except Exception as e:
+        # エラーが発生した場合は 0.0 を返す
+        return 0.0
 
 
 # -----------------------------
@@ -227,6 +306,8 @@ def analyze_segments(
     min_segment_sec: float,
     max_gap_sec: float,
     frame_csv_path: Optional[Path],
+    partial_match: bool = False,
+    feature_threshold: float = 0.7,
     progress_interval_sec: float = 0.2,
 ) -> Tuple[List[Segment], float]:
     ref_bgr = cv2.imread(ref_image_path, cv2.IMREAD_COLOR)
@@ -275,14 +356,23 @@ def analyze_segments(
     if frame_csv_path is not None:
         fcsv = frame_csv_path.open("w", newline="", encoding="utf-8")
         writer = csv.writer(fcsv)
-        writer.writerow([
-            "frame_idx",
-            "time_sec",
-            "phash_hamming_dist",
-            "ssim_score",
-            "smoothed_score",
-            "in_segment",
-        ])
+        if partial_match:
+            writer.writerow([
+                "frame_idx",
+                "time_sec",
+                "feature_match_score",
+                "smoothed_score",
+                "in_segment",
+            ])
+        else:
+            writer.writerow([
+                "frame_idx",
+                "time_sec",
+                "phash_hamming_dist",
+                "ssim_score",
+                "smoothed_score",
+                "in_segment",
+            ])
 
     last_progress_t = time.time()
     try:
@@ -297,13 +387,23 @@ def analyze_segments(
             hd = hamming_distance_64(h, ref_hash)
             phash_pass = (hd <= phash_maxdist)
 
-            # SSIM
+            # SSIM or Feature Matching
             ssim_score: Optional[float] = None
+            feature_match_score: Optional[float] = None
             score_for_smoothing = 0.0
-            if phash_pass:
-                g = preprocess_for_ssim(frame, size=ssim_size)
-                ssim_score = compute_ssim(g, ref_ssim_gray)
-                score_for_smoothing = ssim_score
+            
+            if partial_match:
+                # 部分一致モード：特徴点マッチングを使用
+                feature_match_score = match_template_by_features(
+                    ref_bgr, frame, feature_threshold=feature_threshold
+                )
+                score_for_smoothing = feature_match_score
+            else:
+                # 通常モード：pHash + SSIM を使用
+                if phash_pass:
+                    g = preprocess_for_ssim(frame, size=ssim_size)
+                    ssim_score = compute_ssim(g, ref_ssim_gray)
+                    score_for_smoothing = ssim_score
 
             # EMA smoothing
             ema = alpha * score_for_smoothing + (1.0 - alpha) * ema
@@ -322,14 +422,23 @@ def analyze_segments(
 
             if writer is not None:
                 tsec = frame_idx / fps
-                writer.writerow([
-                    frame_idx,
-                    f"{tsec:.6f}",
-                    hd,
-                    "" if ssim_score is None else f"{ssim_score:.6f}",
-                    f"{ema:.6f}",
-                    int(in_segment),
-                ])
+                if partial_match:
+                    writer.writerow([
+                        frame_idx,
+                        f"{tsec:.6f}",
+                        "" if feature_match_score is None else f"{feature_match_score:.6f}",
+                        f"{ema:.6f}",
+                        int(in_segment),
+                    ])
+                else:
+                    writer.writerow([
+                        frame_idx,
+                        f"{tsec:.6f}",
+                        hd,
+                        "" if ssim_score is None else f"{ssim_score:.6f}",
+                        f"{ema:.6f}",
+                        int(in_segment),
+                    ])
 
             frame_idx += 1
 
@@ -598,6 +707,9 @@ def main():
 
     parser.add_argument("--progress_interval", type=float, default=0.2, help="解析進捗表示の間隔（秒）")
 
+    parser.add_argument("--partial-match", action="store_true", help="部分一致モード: 参照フレームが入力フレーム内の一部に含まれる場合を検出（特徴点マッチング使用）")
+    parser.add_argument("--feature_threshold", type=float, default=0.7, help="特徴点マッチングの信頼度閾値（0.0～1.0）。小さくすると検出が容易になる。規定値 0.7")
+
     args = parser.parse_args()
 
     deinterlace = not args.no_deinterlace
@@ -626,6 +738,10 @@ def main():
     if not ref_path.exists():
         raise FileNotFoundError(f"参照画像が見つかりません: {ref_path}（--ref で指定可能）")
 
+    for exec_name in ["ffmpeg", "ffprobe"]:
+        if not find_executable(exec_name):
+            raise RuntimeError(f"{exec_name} が見つかりません。PATH を確認してください。")
+
     input_duration = probe_duration_ffprobe(str(in_path))  # for ffmpeg progress denominator
 
     print(f"Input : {in_path}")
@@ -637,6 +753,8 @@ def main():
         print(f"FrmCSV: {frm_csv_path}")
     if input_duration:
         print(f"Duration (ffprobe): {input_duration:.2f}s")
+    if args.partial_match:
+        print(f"Mode: PARTIAL MATCH (feature-based detection)")
 
     segs, fps = analyze_segments(
         input_path=str(in_path),
@@ -652,6 +770,8 @@ def main():
         min_segment_sec=args.min_segment_sec,
         max_gap_sec=args.max_gap_sec,
         frame_csv_path=frm_csv_path,
+        partial_match=args.partial_match,
+        feature_threshold=args.feature_threshold,
         progress_interval_sec=args.progress_interval,
     )
 
@@ -659,7 +779,9 @@ def main():
 
     if seg_csv_path is not None:
         params = {
-            "phash_maxdist": args.phash_maxdist,
+            "partial_match": args.partial_match,
+            "feature_threshold": args.feature_threshold if args.partial_match else "",
+            "phash_maxdist": args.phash_maxdist if not args.partial_match else "",
             "ssim_enter": args.ssim_enter,
             "ssim_exit": args.ssim_exit,
             "smooth_sec": args.smooth_sec,

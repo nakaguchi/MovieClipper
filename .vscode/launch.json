@@ -9,7 +9,9 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
-            "args": ["D:\\usr\\DL\\video\\AO2026\\AO2026_MSQ1R_Watanuki_Kjaer_edit.ts"],
+            "args": ["D:\\usr\\DL\\video\\AO2026\\AO2026_MS1R_Zheng_Korda_edit.ts", 
+                "--ref", "D:\\usr\\DL\\video\\AO2026\\net.jpg",
+                "--partial-match", "--feature_threshold", "0.7"],
             "console": "integratedTerminal"
         }
     ]
