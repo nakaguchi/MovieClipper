@@ -113,6 +113,9 @@ def compute_ssim(a_gray: np.ndarray, b_gray: np.ndarray) -> float:
 def match_template_by_features(
     ref_bgr: np.ndarray,
     frame_bgr: np.ndarray,
+    kp_ref: List[cv2.KeyPoint],
+    desc_ref: np.ndarray,
+    sift: object,
     feature_threshold: float = 0.7,
 ) -> float:
     """
@@ -128,20 +131,15 @@ def match_template_by_features(
         マッチスコア（0.0～1.0）。高いほどマッチしている。
     """
     try:
-        # グレースケール変換
-        ref_gray = cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY)
+        # フレーム側をグレースケールにして切り出す（参照記述子は事前計算済み）
         frame_gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-        frame_gray = frame_gray[240:540,320:1600]  # crop to match ref frame size
-        
-        # SIFT初期化
-        sift = cv2.SIFT_create()
-        
-        # キーポイントと記述子を検出
-        kp_ref, desc_ref = sift.detectAndCompute(ref_gray, None)
+        frame_gray = cv2.resize(frame_gray, (320, 240), interpolation=cv2.INTER_AREA)  # crop to match ref frame size
+
+        # 受け取った SIFT 実装を使ってフレーム側のキーポイント・記述子を計算
         kp_frame, desc_frame = sift.detectAndCompute(frame_gray, None)
         
         # マッチング対象がない場合
-        if desc_ref is None or desc_frame is None or len(kp_ref) < 4 or len(kp_frame) < 4:
+        if desc_frame is None or len(kp_ref) < 4 or len(kp_frame) < 4:
             return 0.0
         
         # FLANN ベースのマッチャーを使用（高速）
@@ -317,6 +315,15 @@ def analyze_segments(
     ref_hash = phash_64(ref_bgr)
     ref_ssim_gray = preprocess_for_ssim(ref_bgr, size=ssim_size)
 
+    # 部分一致モード向け: 参照フレームの特徴量は最初に一度だけ計算する
+    sift = None
+    kp_ref = None
+    desc_ref = None
+    if partial_match:
+        sift = cv2.SIFT_create()
+        ref_gray_feat = cv2.resize(cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY), (320, 240), interpolation=cv2.INTER_AREA)
+        kp_ref, desc_ref = sift.detectAndCompute(ref_gray_feat, None)
+
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
         raise FileNotFoundError(f"入力動画を開けません: {input_path}")
@@ -395,7 +402,12 @@ def analyze_segments(
             if partial_match:
                 # 部分一致モード：特徴点マッチングを使用
                 feature_match_score = match_template_by_features(
-                    ref_bgr, frame, feature_threshold=feature_threshold
+                    ref_bgr,
+                    frame,
+                    feature_threshold=feature_threshold,
+                    kp_ref=kp_ref,
+                    desc_ref=desc_ref,
+                    sift=sift,
                 )
                 score_for_smoothing = feature_match_score
             else:
