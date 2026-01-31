@@ -2,17 +2,18 @@
     // IntelliSense を使用して利用可能な属性を学べます。
     // 既存の属性の説明をホバーして表示します。
     // 詳細情報は次を確認してください: https://go.microsoft.com/fwlink/?linkid=830387
-    "version": "0.2.0",
+    "version": "0.3.0",
     "configurations": [
         {
             "name": "Python デバッガー: 現在のファイル",
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
-            "args": ["D:\\usr\\DL\\video\\AO2026\\AO2026_MS1R_Zheng_Korda_edit.ts", 
+            "args": ["D:\\usr\\DL\\video\\AO2026\\AO2026_MS1R_Zheng_Korda.ts", 
                 "--ref", "D:\\usr\\DL\\video\\AO2026\\court.jpg",
-                "--partial-match", "--feature_threshold", "0.75", "--visual",
-                "--frame-skip", "5", "--frame_csv"],
+                "--partial_match", "--feature_threshold", "0.8", "--visual",
+                "--frame_skip", "3", "--frame_csv",
+                "--ssim_enter", "0.7", "--ssim_exit", "0.6"],
             "console": "integratedTerminal"
         }
     ]

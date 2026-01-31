@@ -118,6 +118,7 @@ def match_template_by_features(
     detector: object,
     feature_threshold: float = 0.7,
     visualize: bool = False,
+    angle_tol: float = 15.0,
 ) -> float:
     """
     特徴点マッチングで参照フレームが入力フレーム内の一部に含まれるかを判定する。
@@ -136,15 +137,8 @@ def match_template_by_features(
         frame_gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
         frame_gray = cv2.resize(frame_gray, FM_SIZE, interpolation=cv2.INTER_AREA)  # crop to match ref frame size
 
-        # 受け取った ORB 実装を使ってフレーム側のキーポイントを検出
-        # その後キー点角度を0にして compute を呼び、回転補正を無効化する
-        kp_frame = detector.detect(frame_gray, None)
-        for kp in kp_frame:
-            kp.angle = 0.0
-        if kp_frame:
-            kp_frame, desc_frame = detector.compute(frame_gray, kp_frame)
-        else:
-            desc_frame = None
+        # 受け取った ORB 実装を使ってフレーム側のキーポイント・記述子を計算
+        kp_frame, desc_frame = detector.detectAndCompute(frame_gray, None)
         
         # マッチング対象がない場合
         if desc_frame is None or len(kp_ref) < 4 or len(kp_frame) < 4:
@@ -163,6 +157,16 @@ def match_template_by_features(
                 m, n = m_n
                 if m.distance < feature_threshold * n.distance:
                     good_matches.append(m)
+        # マッチ後に角度差でフィルタ（角度依存マッチング）
+        if len(good_matches) > 0 and angle_tol is not None and angle_tol >= 0.0:
+            filtered = []
+            for m in good_matches:
+                ang_ref = kp_ref[m.queryIdx].angle if kp_ref and m.queryIdx < len(kp_ref) else 0.0
+                ang_fr = kp_frame[m.trainIdx].angle if kp_frame and m.trainIdx < len(kp_frame) else 0.0
+                diff = abs(((ang_ref - ang_fr + 180.0) % 360.0) - 180.0)
+                if diff <= angle_tol:
+                    filtered.append(m)
+            good_matches = filtered
         
         # 十分なマッチが見つからない場合
         if len(good_matches) < 4:
@@ -195,7 +199,7 @@ def match_template_by_features(
                 txt = f"score={score:.3f} inliers={int(inliers)}/{len(good_matches)}"
                 cv2.putText(img_matches, txt, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
                 cv2.imshow("feature_matches", img_matches)
-                cv2.waitKey(0)
+                cv2.waitKey(1)
             except Exception:
                 pass
         
@@ -346,14 +350,8 @@ def analyze_segments(
     if partial_match:
         detector = cv2.ORB_create(nfeatures=1500)
         ref_gray_feat = cv2.resize(cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY), FM_SIZE, interpolation=cv2.INTER_AREA)
-        # detect then compute with rotation normalization disabled (force angle=0)
-        kp_ref = detector.detect(ref_gray_feat, None)
-        for kp in kp_ref:
-            kp.angle = 0.0
-        if kp_ref:
-            kp_ref, desc_ref = detector.compute(ref_gray_feat, kp_ref)
-        else:
-            desc_ref = None
+        # 通常の detectAndCompute を使い、記述子は回転補正ありで計算する
+        kp_ref, desc_ref = detector.detectAndCompute(ref_gray_feat, None)
 
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
@@ -773,9 +771,9 @@ def main():
 
     parser.add_argument("--visual", action="store_true", help="一致計算中の処理画像を表示する（デバッグ用）")
 
-    parser.add_argument("--frame-skip", type=int, default=0, help="各処理フレームの後にスキップするフレーム数（0で無効）。例: 2 は各処理後に2フレームをスキップ）")
+    parser.add_argument("--frame_skip", type=int, default=0, help="各処理フレームの後にスキップするフレーム数（0で無効）。例: 2 は各処理後に2フレームをスキップ）")
 
-    parser.add_argument("--partial-match", action="store_true", help="部分一致モード: 参照フレームが入力フレーム内の一部に含まれる場合を検出（特徴点マッチング使用）")
+    parser.add_argument("--partial_match", action="store_true", help="部分一致モード: 参照フレームが入力フレーム内の一部に含まれる場合を検出（特徴点マッチング使用）")
     parser.add_argument("--feature_threshold", type=float, default=0.7, help="特徴点マッチングの信頼度閾値（0.0～1.0）。小さくすると検出が容易になる。規定値 0.7")
 
     args = parser.parse_args()
