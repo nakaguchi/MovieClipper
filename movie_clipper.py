@@ -20,7 +20,7 @@ from skimage.metrics import structural_similarity as ssim
 
 # Version
 __version__ = "1.3"
-
+FM_SIZE = (640, 480)  # 特徴点マッチング用のリサイズサイズ
 
 # -----------------------------
 # small helpers
@@ -117,6 +117,7 @@ def match_template_by_features(
     desc_ref: np.ndarray,
     sift: object,
     feature_threshold: float = 0.7,
+    visualize: bool = False,
 ) -> float:
     """
     特徴点マッチングで参照フレームが入力フレーム内の一部に含まれるかを判定する。
@@ -133,7 +134,7 @@ def match_template_by_features(
     try:
         # フレーム側をグレースケールにして切り出す（参照記述子は事前計算済み）
         frame_gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-        frame_gray = cv2.resize(frame_gray, (320, 240), interpolation=cv2.INTER_AREA)  # crop to match ref frame size
+        frame_gray = cv2.resize(frame_gray, FM_SIZE, interpolation=cv2.INTER_AREA)  # crop to match ref frame size
 
         # 受け取った SIFT 実装を使ってフレーム側のキーポイント・記述子を計算
         kp_frame, desc_frame = sift.detectAndCompute(frame_gray, None)
@@ -176,6 +177,19 @@ def match_template_by_features(
         # RANSAC でのインライアの比率をスコアとする
         inliers = np.sum(mask)
         score = float(inliers) / float(len(good_matches))
+
+        # 可視化（マッチ表示）
+        if visualize:
+            try:
+                ref_disp = cv2.resize(ref_bgr, FM_SIZE, interpolation=cv2.INTER_AREA)
+                frame_disp = cv2.resize(frame_bgr, FM_SIZE, interpolation=cv2.INTER_AREA)
+                img_matches = cv2.drawMatches(ref_disp, kp_ref, frame_disp, kp_frame, good_matches, None, flags=2)
+                txt = f"score={score:.3f} inliers={int(inliers)}/{len(good_matches)}"
+                cv2.putText(img_matches, txt, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                cv2.imshow("feature_matches", img_matches)
+                cv2.waitKey(1)
+            except Exception:
+                pass
         
         return score
         
@@ -307,6 +321,7 @@ def analyze_segments(
     partial_match: bool = False,
     feature_threshold: float = 0.7,
     frame_skip: int = 0,
+    visual: bool = False,
     progress_interval_sec: float = 0.2,
 ) -> Tuple[List[Segment], float]:
     ref_bgr = cv2.imread(ref_image_path, cv2.IMREAD_COLOR)
@@ -322,7 +337,7 @@ def analyze_segments(
     desc_ref = None
     if partial_match:
         sift = cv2.SIFT_create()
-        ref_gray_feat = cv2.resize(cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY), (320, 240), interpolation=cv2.INTER_AREA)
+        ref_gray_feat = cv2.resize(cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY), FM_SIZE, interpolation=cv2.INTER_AREA)
         kp_ref, desc_ref = sift.detectAndCompute(ref_gray_feat, None)
 
     cap = cv2.VideoCapture(input_path)
@@ -409,6 +424,7 @@ def analyze_segments(
                     desc_ref,
                     sift,
                     feature_threshold=feature_threshold,
+                    visualize=visual,
                 )
                 score_for_smoothing = feature_match_score
             else:
@@ -417,6 +433,18 @@ def analyze_segments(
                     g = preprocess_for_ssim(frame, size=ssim_size)
                     ssim_score = compute_ssim(g, ref_ssim_gray)
                     score_for_smoothing = ssim_score
+                    if visual:
+                        try:
+                            ref_disp = cv2.resize(ref_ssim_gray, (ssim_size, ssim_size))
+                            cur_disp = cv2.resize(g, (ssim_size, ssim_size))
+                            disp = np.stack([cur_disp, cur_disp, cur_disp], axis=2)
+                            ref_color = np.stack([ref_disp, ref_disp, ref_disp], axis=2)
+                            side = np.hstack([ref_color, disp])
+                            cv2.putText(side, f"SSIM={ssim_score:.3f}", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                            cv2.imshow("ssim", side)
+                            cv2.waitKey(1)
+                        except Exception:
+                            pass
 
             # EMA smoothing
             ema = alpha * score_for_smoothing + (1.0 - alpha) * ema
@@ -728,6 +756,8 @@ def main():
 
     parser.add_argument("--progress_interval", type=float, default=0.2, help="解析進捗表示の間隔（秒）")
 
+    parser.add_argument("--visual", action="store_true", help="一致計算中の処理画像を表示する（デバッグ用）")
+
     parser.add_argument("--frame-skip", type=int, default=0, help="各処理フレームの後にスキップするフレーム数（0で無効）。例: 2 は各処理後に2フレームをスキップ）")
 
     parser.add_argument("--partial-match", action="store_true", help="部分一致モード: 参照フレームが入力フレーム内の一部に含まれる場合を検出（特徴点マッチング使用）")
@@ -796,6 +826,7 @@ def main():
         partial_match=args.partial_match,
         feature_threshold=args.feature_threshold,
         frame_skip=args.frame_skip,
+        visual=args.visual,
         progress_interval_sec=args.progress_interval,
     )
 

@@ -11,7 +11,7 @@
             "program": "${file}",
             "args": ["D:\\usr\\DL\\video\\AO2026\\AO2026_MS1R_Zheng_Korda_edit.ts", 
                 "--ref", "D:\\usr\\DL\\video\\AO2026\\court.jpg",
-                "--partial-match", "--feature_threshold", "0.5",
+                "--partial-match", "--feature_threshold", "0.5", "--visual"
                 "--frame-skip", "5", "--frame_csv"],
             "console": "integratedTerminal"
         }
