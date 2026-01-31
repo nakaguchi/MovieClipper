@@ -306,6 +306,7 @@ def analyze_segments(
     frame_csv_path: Optional[Path],
     partial_match: bool = False,
     feature_threshold: float = 0.7,
+    frame_skip: int = 0,
     progress_interval_sec: float = 0.2,
 ) -> Tuple[List[Segment], float]:
     ref_bgr = cv2.imread(ref_image_path, cv2.IMREAD_COLOR)
@@ -404,10 +405,10 @@ def analyze_segments(
                 feature_match_score = match_template_by_features(
                     ref_bgr,
                     frame,
+                    kp_ref,
+                    desc_ref,
+                    sift,
                     feature_threshold=feature_threshold,
-                    kp_ref=kp_ref,
-                    desc_ref=desc_ref,
-                    sift=sift,
                 )
                 score_for_smoothing = feature_match_score
             else:
@@ -453,6 +454,14 @@ def analyze_segments(
                     ])
 
             frame_idx += 1
+
+            # フレームスキップ: 指定数だけフレームを grab() して読み飛ばす
+            if frame_skip and frame_skip > 0:
+                for _ in range(frame_skip):
+                    ok_skip = cap.grab()
+                    if not ok_skip:
+                        break
+                    frame_idx += 1
 
             # progress
             now = time.time()
@@ -719,6 +728,8 @@ def main():
 
     parser.add_argument("--progress_interval", type=float, default=0.2, help="解析進捗表示の間隔（秒）")
 
+    parser.add_argument("--frame-skip", type=int, default=0, help="各処理フレームの後にスキップするフレーム数（0で無効）。例: 2 は各処理後に2フレームをスキップ）")
+
     parser.add_argument("--partial-match", action="store_true", help="部分一致モード: 参照フレームが入力フレーム内の一部に含まれる場合を検出（特徴点マッチング使用）")
     parser.add_argument("--feature_threshold", type=float, default=0.7, help="特徴点マッチングの信頼度閾値（0.0～1.0）。小さくすると検出が容易になる。規定値 0.7")
 
@@ -784,6 +795,7 @@ def main():
         frame_csv_path=frm_csv_path,
         partial_match=args.partial_match,
         feature_threshold=args.feature_threshold,
+        frame_skip=args.frame_skip,
         progress_interval_sec=args.progress_interval,
     )
 
