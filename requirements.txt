@@ -2,3 +2,5 @@ opencv-python
 numpy
 scikit-image
 pyinstaller
+tkeasyGUI
+Pillow
