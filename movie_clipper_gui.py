@@ -27,8 +27,8 @@ class MovieClipperGUI:
         self.frame_width = 0
         self.frame_height = 0
         self.current_frame = 0
-        self.is_playing = False
-        self.playback_speed = 1.0
+        self.start_frame = None  # 選択範囲の開始フレーム
+        self.end_frame = None    # 選択範囲の終了フレーム
         
         # ウィンドウレイアウト定義
         self.layout = [
@@ -44,33 +44,27 @@ class MovieClipperGUI:
                     range=(0, 100),
                     default_value=0,
                     orientation="h",
-                    size=(60, 2),
+                    expand_x=True,
+                    # size=(60, 2),
                     key="-SLIDER-",
                     enable_events=True,
                 ),
             ],
             [
-                eg.Button("▶ 再生", size=(8, 1), key="-PLAY-"),
-                eg.Button("⏸ 一時停止", size=(8, 1), key="-PAUSE-"),
-                eg.Button("⏹ 停止", size=(8, 1), key="-STOP-"),
                 eg.Text("", key="-TIME_INFO-", size=(30, 1)),
             ],
             [
-                eg.Text("フレーム情報:", font=("Arial", 10, "bold")),
-                eg.Text("", key="-FRAME_INFO-", size=(80, 1)),
+                eg.Button("開始点を設定", size=(15, 1), button_color=("white", "green")),
+                eg.Button("終了点を設定", size=(15, 1), button_color=("white", "red")),
+                eg.Button("選択をクリア", size=(15, 1)),
             ],
             [
-                eg.Text("再生速度:"),
-                eg.Slider(
-                    range=(0.25, 2.0),
-                    default_value=1.0,
-                    resolution=0.25,
-                    orientation="h",
-                    size=(30, 1),
-                    key="-SPEED-",
-                    enable_events=True,
-                ),
-                eg.Text("", key="-SPEED_TEXT-", size=(10, 1)),
+                eg.Text("選択範囲:", font=("Arial", 10, "bold")),
+                eg.Text("未設定", key="-SELECTION_INFO-", expand_x=True),
+            ],
+            [
+                eg.Text("フレーム情報:", font=("Arial", 10, "bold")),
+                eg.Text("", key="-FRAME_INFO-", expand_x=True),
             ],
         ]
         
@@ -96,7 +90,6 @@ class MovieClipperGUI:
         self.frame_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.current_frame = 0
-        self.is_playing = False
         
         # ファイル名を表示
         filename = Path(filepath).name
@@ -126,6 +119,40 @@ class MovieClipperGUI:
         # フレームをBGRからRGBに変換してPILImage化
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame_resized = cv2.resize(frame_rgb, self.preview_size)
+        
+        # 選択範囲を視覚化（開始点と終了点が設定されている場合）
+        if self.start_frame is not None and self.end_frame is not None:
+            frame_array = np.array(frame_resized)
+            
+            # 選択範囲内のフレームか判定
+            if self.start_frame <= self.current_frame <= self.end_frame:
+                # 選択範囲内は緑色の透明度付き矩形で表示
+                overlay = frame_array.copy()
+                overlay[:, :] = [50, 200, 50]  # 緑色
+                frame_array = cv2.addWeighted(overlay, 0.3, frame_array, 0.7, 0)
+            
+            # フレームの下部に選択範囲のタイムラインバーを描画
+            bar_height = 10
+            bar_width = self.preview_size[0]
+            
+            # 全体のバーを灰色で描画
+            frame_array[-bar_height:, :] = [100, 100, 100]
+            
+            # 選択範囲部分を色で表示
+            start_pixel = int((self.start_frame / max(1, self.total_frames)) * bar_width)
+            end_pixel = int((self.end_frame / max(1, self.total_frames)) * bar_width)
+            start_pixel = max(0, min(start_pixel, bar_width - 1))
+            end_pixel = max(0, min(end_pixel, bar_width - 1))
+            if start_pixel <= end_pixel:
+                frame_array[-bar_height:, start_pixel:end_pixel+1] = [0, 255, 0]  # 緑色
+            
+            # 現在フレーム位置を赤色で表示
+            current_pixel = int((self.current_frame / max(1, self.total_frames)) * bar_width)
+            current_pixel = max(0, min(current_pixel, bar_width - 1))
+            frame_array[-bar_height:, current_pixel] = [255, 0, 0]  # 赤色
+            
+            frame_resized = frame_array
+        
         pil_image = Image.fromarray(frame_resized)
         
         # PIL ImageをPPM形式のバイト列に変換
@@ -140,6 +167,18 @@ class MovieClipperGUI:
         total_time = self.total_frames / self.fps if self.fps > 0 else 0
         time_str = self.format_time(current_time) + " / " + self.format_time(total_time)
         self.window["-TIME_INFO-"].update(time_str)
+    
+    def update_selection_info(self):
+        """選択範囲情報を更新"""
+        if self.start_frame is None or self.end_frame is None:
+            self.window["-SELECTION_INFO-"].update("未設定")
+        else:
+            start_time = self.format_time(self.start_frame / self.fps) if self.fps > 0 else "00:00"
+            end_time = self.format_time(self.end_frame / self.fps) if self.fps > 0 else "00:00"
+            duration_frames = self.end_frame - self.start_frame + 1
+            duration_time = self.format_time(duration_frames / self.fps) if self.fps > 0 else "00:00"
+            selection_info = f"開始: フレーム {self.start_frame} ({start_time}), 終了: フレーム {self.end_frame} ({end_time}), 長さ: {duration_frames}フレーム ({duration_time})"
+            self.window["-SELECTION_INFO-"].update(selection_info)
     
     def update_frame_info(self):
         """フレーム情報を更新"""
@@ -156,48 +195,6 @@ class MovieClipperGUI:
         minutes = int(seconds) // 60
         secs = int(seconds) % 60
         return f"{minutes:02d}:{secs:02d}"
-    
-    def play(self):
-        """再生"""
-        if not self.cap:
-            print("動画ファイルが読み込まれていません")
-            eg.popup_warning("先に動画ファイルを読み込んでください", "警告")
-            return
-        
-        # self.window["-SLIDER-"].update(disabled=True)
-        
-        if self.current_frame >= self.total_frames - 1:
-            self.current_frame = 0
-            self.display_frame()
-        
-        self.is_playing = True
-        self.playback_loop()
-    
-    def playback_loop(self):
-        """再生ループ（スレッド内で実行）"""
-        frame_delay = int(1000 / (self.fps * self.playback_speed)) if self.fps > 0 else 0
-        print(f"frame_delay: {frame_delay} ms")
-        
-        while self.is_playing and self.current_frame < self.total_frames - 1:
-            self.current_frame += 1
-            self.display_frame()
-            self.window["-SLIDER-"].update(value=self.current_frame)
-            self.update_frame_info()
-            
-            # イベント処理
-            event, values = self.window.read(timeout=1000)
-            
-            if event == eg.WINDOW_CLOSED or event == "終了":
-                self.is_playing = False
-                return
-            elif event == "-PAUSE-":
-                self.is_playing = False
-                return
-            elif event == "-STOP-":
-                self.is_playing = False
-                self.current_frame = 0
-                self.display_frame()
-                self.window["-SLIDER-"].update(value=self.current_frame)
     
     def run(self):
         """GUIメインループ"""
@@ -218,22 +215,25 @@ class MovieClipperGUI:
                 if filepath:
                     self.open_video(filepath)
             
-            elif event == "-PLAY-":
-                self.play()
-            
-            elif event == "-PAUSE-":
-                self.is_playing = False
-            
-            
             elif event == "-SLIDER-":
-                if not self.is_playing:
-                    self.current_frame = int(values["-SLIDER-"])
-                    self.display_frame()
+                self.current_frame = int(values["-SLIDER-"])
+                self.display_frame()
             
-            elif event == "-SPEED-":
-                self.playback_speed = values["-SPEED-"]
-                speed_text = f"{self.playback_speed:.2f}x"
-                self.window["-SPEED_TEXT-"].update(speed_text)
+            elif event == "開始点を設定":
+                self.start_frame = self.current_frame
+                self.update_selection_info()
+                self.display_frame()
+            
+            elif event == "終了点を設定":
+                self.end_frame = self.current_frame
+                self.update_selection_info()
+                self.display_frame()
+            
+            elif event == "選択をクリア":
+                self.start_frame = None
+                self.end_frame = None
+                self.update_selection_info()
+                self.display_frame()
         
         # クリーンアップ
         if self.cap:
