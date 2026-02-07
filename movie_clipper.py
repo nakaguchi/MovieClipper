@@ -158,6 +158,8 @@ class Segment:
     end: float
 
 
+# -----------------------------
+# Segment processing
 def merge_segments(segs: List[Segment], max_gap_sec: float) -> List[Segment]:
     if not segs:
         return []

@@ -64,7 +64,7 @@ class pHash_Matcher(Matcher):
     Similarity = 1.0 - (hamming_distance / 64.0)
     """
     
-    def __init__(self, max_hamming_dist: int = 20):
+    def __init__(self, max_hamming_dist: int = 100):
         """
         Initialize pHash matcher.
         
@@ -102,13 +102,11 @@ class pHash_Matcher(Matcher):
         
         try:
             frame_hash = phash_64(frame_bgr)
-            hd = hamming_distance_64(frame_hash, self.ref_hash)
-            
-            if hd > self.max_hamming_dist:
-                return 0.0
+            hd = min(hamming_distance_64(frame_hash, self.ref_hash), self.max_hamming_dist)
             
             # Normalize to [0, 1]: 1.0 = perfect match (distance 0)
-            similarity = 1.0 - (hd / 64.0)
-            return max(0.0, similarity)
+            similarity = 1.0 - (hd / self.max_hamming_dist)
+            return similarity
         except Exception:
             return 0.0
+    
