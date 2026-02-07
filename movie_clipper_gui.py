@@ -58,14 +58,19 @@ class MovieClipperGUI:
                 ),
             ],
             [
-                eg.Button("開始点を設定", size=(15, 1), button_color=("white", "green")),
-                eg.Button("終了点を設定", size=(15, 1), button_color=("white", "red")),
+                eg.Button("開始点を設定", size=(15, 1)),
+                eg.Button("終了点を設定", size=(15, 1)),
                 eg.Button("選択をクリア", size=(15, 1)),
                 eg.Text("", key="-TIME_INFO-", size=(30, 1)),
             ],
             [
                 eg.Text("選択範囲:", font=("Arial", 10, "bold")),
                 eg.Text("未設定", key="-SELECTION_INFO-", expand_x=True),
+            ],
+            [
+                eg.Text("保存ファイル名:", size=(12, 1)),
+                eg.Input("AO2026_", key="-SAVE_NAME-", size=(40, 1), expand_x=True),
+                eg.Button("処理と保存", size=(15, 1), background_color="lightblue"),
             ],
         ]
         
