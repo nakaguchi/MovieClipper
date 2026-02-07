@@ -2,7 +2,6 @@
 MovieClipper GUI - TkEasyGUI版
 動画ファイルの読み込み、再生、シークバー操作が可能なGUI
 """
-
 import os
 import io
 import json
@@ -68,9 +67,9 @@ class MovieClipperGUI:
                 eg.Text("未設定", key="-SELECTION_INFO-", expand_x=True),
             ],
             [
-                eg.Text("保存ファイル名:", size=(12, 1)),
+                eg.Text("出力ファイル名:", size=(12, 1)),
                 eg.Input("AO2026_", key="-SAVE_NAME-", size=(40, 1), expand_x=True),
-                eg.Button("処理と保存", size=(15, 1), background_color="lightblue"),
+                eg.Button("バッチ保存", size=(15, 1), background_color="lightblue"),
             ],
         ]
         
@@ -295,6 +294,32 @@ class MovieClipperGUI:
                 self.end_frame = self.total_frames - 1
                 self.display_frame()
                 self.update_info()
+
+            elif event == "バッチ保存":
+                # 入力ファイル名と出力名、選択範囲の開始/終了時間を batch.txt に追記
+                if not self.video_path:
+                    eg.popup_error("エラー", "動画が読み込まれていません")
+                    continue
+
+                output_name = values.get("-SAVE_NAME-", "").strip()
+                if not output_name:
+                    eg.popup_error("エラー", "保存ファイル名を入力してください")
+                    continue
+
+                if self.start_frame is None or self.end_frame is None:
+                    eg.popup_error("エラー", "選択範囲が設定されていません")
+                    continue
+
+                try:
+                    start_time = self.start_frame / self.fps if self.fps > 0 else 0.0
+                    end_time = self.end_frame / self.fps if self.fps > 0 else 0.0
+                    input_name = self.video_path
+                    batch_path = Path.cwd() / "batch.ps1"
+                    with open(batch_path, "a", encoding="utf-8") as bf:
+                        bf.write(f'movie_clipper.exe "{input_name}" --output "{output_name}" {start_time:.3f} {end_time:.3f}\n')
+                    eg.popup("保存完了", f"{batch_path} に追記しました")
+                except Exception as e:
+                    eg.popup_error("エラー", f"バッチ保存に失敗しました: {e}")
         
         # クリーンアップ
         if self.cap:

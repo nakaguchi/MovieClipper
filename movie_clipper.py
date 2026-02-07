@@ -71,11 +71,11 @@ def render_progress(current: float, total: Optional[float], width: int = 30) -> 
 # -----------------------------
 # pHash (64-bit) and Hamming distance
 # -----------------------------
-def phash_64(gray_bgr_or_gray: np.ndarray) -> int:
-    if gray_bgr_or_gray.ndim == 3:
-        gray = cv2.cvtColor(gray_bgr_or_gray, cv2.COLOR_BGR2GRAY)
+def phash_64(image_in: np.ndarray) -> int:
+    if image_in.ndim == 3:
+        gray = cv2.cvtColor(image_in, cv2.COLOR_BGR2GRAY)
     else:
-        gray = gray_bgr_or_gray
+        gray = image_in
 
     img = cv2.resize(gray, (32, 32), interpolation=cv2.INTER_AREA).astype(np.float32)
     dct = cv2.dct(img)
