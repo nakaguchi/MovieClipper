@@ -5,6 +5,8 @@ MovieClipper GUI - TkEasyGUI版
 
 import os
 import io
+import json
+import subprocess
 import TkEasyGUI as eg
 import cv2
 import numpy as np
@@ -17,6 +19,7 @@ class MovieClipperGUI:
     """動画編集GUI"""
     
     def __init__(self):
+        """初期化"""
         
         # 変数初期化
         self.preview_size = (640, 360)
@@ -34,7 +37,11 @@ class MovieClipperGUI:
         self.layout = [
             [
                 eg.Button("ファイルを開く", size=(12, 1)),
-                eg.Text("未読み込み", key="-FILE_STATUS-", size=(40, 1)),
+                eg.Text("未読み込み", key="-FILE_STATUS-", expand_x=True),
+            ],
+            [
+                eg.Text("フレーム情報:", font=("Arial", 10, "bold")),
+                eg.Text("", key="-FRAME_INFO-", expand_x=True),
             ],
             [
                 eg.Image(key="-IMAGE-", size=self.preview_size),
@@ -51,25 +58,59 @@ class MovieClipperGUI:
                 ),
             ],
             [
-                eg.Text("", key="-TIME_INFO-", size=(30, 1)),
-            ],
-            [
                 eg.Button("開始点を設定", size=(15, 1), button_color=("white", "green")),
                 eg.Button("終了点を設定", size=(15, 1), button_color=("white", "red")),
                 eg.Button("選択をクリア", size=(15, 1)),
+                eg.Text("", key="-TIME_INFO-", size=(30, 1)),
             ],
             [
                 eg.Text("選択範囲:", font=("Arial", 10, "bold")),
                 eg.Text("未設定", key="-SELECTION_INFO-", expand_x=True),
             ],
-            [
-                eg.Text("フレーム情報:", font=("Arial", 10, "bold")),
-                eg.Text("", key="-FRAME_INFO-", expand_x=True),
-            ],
         ]
         
         self.window = eg.Window("MovieClipper GUI", self.layout, finalize=True)
         self.image_element = self.window["-IMAGE-"]
+    
+    def get_video_info_ffprobe(self, filepath):
+        """ffprobeを使用して正確な動画情報を取得"""
+        try:
+            cmd = [
+                'ffprobe',
+                '-v', 'error',
+                '-select_streams', 'v:0',
+                '-show_entries', 'stream=width,height,r_frame_rate,nb_read_packets,duration',
+                '-of', 'json',
+                filepath
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
+                if data.get('streams'):
+                    stream = data['streams'][0]
+                    width = stream.get('width', 0)
+                    height = stream.get('height', 0)
+                    
+                    # フレームレートを取得
+                    fps = 30  # デフォルト値
+                    if 'r_frame_rate' in stream:
+                        parts = stream['r_frame_rate'].split('/')
+                        if len(parts) == 2:
+                            fps = float(parts[0]) / float(parts[1])
+                    
+                    # 総フレーム数を計算
+                    duration = stream.get('duration', 0)
+                    if duration:
+                        duration = float(duration)
+                        total_frames = int(duration * fps)
+                    else:
+                        total_frames = 0
+                    
+                    return width, height, fps, total_frames
+        except Exception as e:
+            print(f"ffprobe error: {e}")
+        
+        return None
         
     def open_video(self, filepath):
         """動画ファイルを開く"""
@@ -77,6 +118,18 @@ class MovieClipperGUI:
             self.cap.release()
         
         self.video_path = filepath
+        
+        # ffprobeで動画情報を取得
+        video_info = self.get_video_info_ffprobe(filepath)
+        
+        if video_info is None:
+            eg.popup_error("エラー", f"動画ファイルをffprobeで読み込みできません: {filepath}")
+            self.video_path = None
+            return False
+        
+        self.frame_width, self.frame_height, self.fps, self.total_frames = video_info
+        
+        # OpenCVで動画をオープン
         self.cap = cv2.VideoCapture(filepath)
         
         if not self.cap.isOpened():
@@ -84,12 +137,11 @@ class MovieClipperGUI:
             self.video_path = None
             return False
         
-        # 動画情報を取得
-        self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        self.fps = self.cap.get(cv2.CAP_PROP_FPS)
-        self.frame_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        self.frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        # 動画情報を設定
         self.current_frame = 0
+        self.start_frame = 0
+        self.end_frame = self.total_frames - 1
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame)
         
         # ファイル名を表示
         filename = Path(filepath).name
@@ -100,7 +152,7 @@ class MovieClipperGUI:
         
         # 最初のフレームを表示
         self.display_frame()
-        self.update_frame_info()
+        self.update_info()
         
         return True
     
@@ -125,8 +177,8 @@ class MovieClipperGUI:
             frame_array = np.array(frame_resized)
             
             # 選択範囲内のフレームか判定
-            if self.start_frame <= self.current_frame <= self.end_frame:
-                # 選択範囲内は緑色の透明度付き矩形で表示
+            if not (self.start_frame <= self.current_frame <= self.end_frame):
+                # 選択範囲外は緑色の透明度付き矩形で表示
                 overlay = frame_array.copy()
                 overlay[:, :] = [50, 200, 50]  # 緑色
                 frame_array = cv2.addWeighted(overlay, 0.3, frame_array, 0.7, 0)
@@ -144,7 +196,7 @@ class MovieClipperGUI:
             start_pixel = max(0, min(start_pixel, bar_width - 1))
             end_pixel = max(0, min(end_pixel, bar_width - 1))
             if start_pixel <= end_pixel:
-                frame_array[-bar_height:, start_pixel:end_pixel+1] = [0, 255, 0]  # 緑色
+                frame_array[-bar_height:, start_pixel:end_pixel+1] = [255, 255, 0]  # 黄色
             
             # 現在フレーム位置を赤色で表示
             current_pixel = int((self.current_frame / max(1, self.total_frames)) * bar_width)
@@ -168,7 +220,19 @@ class MovieClipperGUI:
         time_str = self.format_time(current_time) + " / " + self.format_time(total_time)
         self.window["-TIME_INFO-"].update(time_str)
     
-    def update_selection_info(self):
+    
+    def update_info(self):
+        """フレーム情報を更新"""
+        if not self.cap:
+            return
+
+        total_time = self.total_frames / self.fps if self.fps > 0 else 0        
+        info = f"解像度: {self.frame_width} × {self.frame_height}" \
+                + f"　フレームレート: {self.fps:.2f} fps" \
+                + f"　総フレーム数: {self.total_frames}" \
+                + f"　総再生時間: {self.format_time(total_time)}"
+        self.window["-FRAME_INFO-"].update(info)
+
         """選択範囲情報を更新"""
         if self.start_frame is None or self.end_frame is None:
             self.window["-SELECTION_INFO-"].update("未設定")
@@ -177,19 +241,11 @@ class MovieClipperGUI:
             end_time = self.format_time(self.end_frame / self.fps) if self.fps > 0 else "00:00"
             duration_frames = self.end_frame - self.start_frame + 1
             duration_time = self.format_time(duration_frames / self.fps) if self.fps > 0 else "00:00"
-            selection_info = f"開始: フレーム {self.start_frame} ({start_time}), 終了: フレーム {self.end_frame} ({end_time}), 長さ: {duration_frames}フレーム ({duration_time})"
+            selection_info = f"開始: フレーム {self.start_frame} ({start_time})" \
+                + f"　終了: フレーム {self.end_frame} ({end_time}), " \
+                + f"　長さ: {duration_frames}フレーム ({duration_time})"
             self.window["-SELECTION_INFO-"].update(selection_info)
-    
-    def update_frame_info(self):
-        """フレーム情報を更新"""
-        if not self.cap:
-            return
-        
-        info = f"解像度: {self.frame_width} × {self.frame_height}" + f"　フレームレート: {self.fps:.2f} fps" + \
-                f"　総フレーム数: {self.total_frames}" + f"　現在のフレーム: {self.current_frame}" + \
-                f"　総再生時間: {self.format_time(self.total_frames / self.fps if self.fps > 0 else 0)}"
-        self.window["-FRAME_INFO-"].update(info)
-    
+
     def format_time(self, seconds):
         """秒を MM:SS 形式に変換"""
         minutes = int(seconds) // 60
@@ -201,7 +257,7 @@ class MovieClipperGUI:
         frame_delay = 30  # ミリ秒
         
         while True:
-            event, values = self.window.read(timeout=frame_delay)
+            event, values = self.window.read(timeout=None)
             
             if event == eg.WINDOW_CLOSED or event == "終了":
                 break
@@ -221,19 +277,19 @@ class MovieClipperGUI:
             
             elif event == "開始点を設定":
                 self.start_frame = self.current_frame
-                self.update_selection_info()
                 self.display_frame()
+                self.update_info()
             
             elif event == "終了点を設定":
                 self.end_frame = self.current_frame
-                self.update_selection_info()
                 self.display_frame()
+                self.update_info()
             
             elif event == "選択をクリア":
-                self.start_frame = None
-                self.end_frame = None
-                self.update_selection_info()
+                self.start_frame = 0
+                self.end_frame = self.total_frames - 1
                 self.display_frame()
+                self.update_info()
         
         # クリーンアップ
         if self.cap:
