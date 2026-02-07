@@ -16,9 +16,12 @@ from typing import List, Tuple, Optional, Dict
 
 import cv2
 import numpy as np
-from skimage.metrics import structural_similarity as ssim
 
 from feature_matcher import match_template_by_features, FM_SIZE
+from matcher_base import Matcher
+from orb_matcher import ORB_Matcher
+from ssim_matcher import SSIM_Matcher
+from phash_matcher import pHash_Matcher
 
 # Version
 __version__ = "1.3"
@@ -68,44 +71,9 @@ def render_progress(current: float, total: Optional[float], width: int = 30) -> 
         return f"[{bar}]"
 
 
-# -----------------------------
-# pHash (64-bit) and Hamming distance
-# -----------------------------
-def phash_64(image_in: np.ndarray) -> int:
-    if image_in.ndim == 3:
-        gray = cv2.cvtColor(image_in, cv2.COLOR_BGR2GRAY)
-    else:
-        gray = image_in
-
-    img = cv2.resize(gray, (32, 32), interpolation=cv2.INTER_AREA).astype(np.float32)
-    dct = cv2.dct(img)
-    dct_low = dct[:8, :8].copy()
-    dct_low[0, 0] = 0.0  # ignore DC
-
-    med = np.median(dct_low)
-    bits = (dct_low > med).astype(np.uint8).flatten()
-
-    h = 0
-    for b in bits:
-        h = (h << 1) | int(b)
-    return h
-
-
-def hamming_distance_64(a: int, b: int) -> int:
-    return bitcount(a ^ b)
-
-
-# -----------------------------
-# SSIM preprocessing
-# -----------------------------
-def preprocess_for_ssim(frame_bgr: np.ndarray, size: int = 256) -> np.ndarray:
-    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-    gray = cv2.resize(gray, (size, size), interpolation=cv2.INTER_AREA)
-    return gray
-
-
-def compute_ssim(a_gray: np.ndarray, b_gray: np.ndarray) -> float:
-    return float(ssim(a_gray, b_gray, data_range=255))
+# Note: pHash, Hamming distance, and SSIM functions have been refactored
+# into dedicated matcher classes (phash_matcher.py, ssim_matcher.py).
+# Original placeholder functions can be removed once all code is transitioned to use Matcher classes.
 
 
 # -----------------------------
@@ -239,18 +207,24 @@ def analyze_segments(
     if ref_bgr is None:
         raise FileNotFoundError(f"参照画像を読み込めません: {ref_image_path}")
 
-    ref_hash = phash_64(ref_bgr)
-    ref_ssim_gray = preprocess_for_ssim(ref_bgr, size=ssim_size)
-
-    # 部分一致モード向け: 参照フレームの特徴量は最初に一度だけ計算する
-    detector = None
-    kp_ref = None
-    desc_ref = None
+    # マッチャーを選択して初期化
+    matcher: Matcher
     if partial_match:
-        detector = cv2.ORB_create(nfeatures=1500)
-        ref_gray_feat = cv2.resize(cv2.cvtColor(ref_bgr, cv2.COLOR_BGR2GRAY), FM_SIZE, interpolation=cv2.INTER_AREA)
-        # 通常の detectAndCompute を使い、記述子は回転補正ありで計算する
-        kp_ref, desc_ref = detector.detectAndCompute(ref_gray_feat, None)
+        # ORB特徴点マッチング
+        matcher = ORB_Matcher(
+            nfeatures=1500,
+            feature_threshold=feature_threshold,
+            angle_tol=15.0,
+            min_good_matches=min_good_matches,
+        )
+    else:
+        # pHash + SSIM マッチング
+        matcher = SSIM_Matcher(
+            max_hamming_dist=phash_maxdist,
+            ssim_size=ssim_size,
+        )
+    
+    matcher.set_reference(ref_bgr)
 
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
@@ -303,8 +277,7 @@ def analyze_segments(
             writer.writerow([
                 "frame_idx",
                 "time_sec",
-                "phash_hamming_dist",
-                "ssim_score",
+                "similarity_score",
                 "smoothed_score",
                 "in_segment",
             ])
@@ -317,46 +290,8 @@ def analyze_segments(
                 break
             last_frame_idx = frame_idx
 
-            # pHash+SSIM or Feature Matching
-            score_for_smoothing = 0.0            
-            if partial_match:
-                # 部分一致モード：特徴点マッチングを使用
-                feature_match_score = match_template_by_features(
-                    ref_bgr,
-                    frame,
-                    kp_ref,
-                    desc_ref,
-                    detector,
-                    feature_threshold=feature_threshold,
-                    visualize=visual,
-                    min_good_matches=min_good_matches,
-                )
-                score_for_smoothing = feature_match_score
-            else:
-                # 通常モード：pHash + SSIM を使用
-                # pHash
-                h = phash_64(frame)
-                hd = hamming_distance_64(h, ref_hash)
-                phash_pass = (hd <= phash_maxdist)
-
-                ssim_score = 0.0
-                g = preprocess_for_ssim(frame, size=ssim_size)
-                if phash_pass:
-                    # ssim_score = compute_ssim(g, ref_ssim_gray)
-                    ssim_score = 1.0
-                    score_for_smoothing = ssim_score
-                if visual:
-                    try:
-                        ref_disp = cv2.resize(ref_ssim_gray, (ssim_size, ssim_size))
-                        cur_disp = cv2.resize(g, (ssim_size, ssim_size))
-                        disp = np.stack([cur_disp, cur_disp, cur_disp], axis=2)
-                        ref_color = np.stack([ref_disp, ref_disp, ref_disp], axis=2)
-                        side = np.hstack([ref_color, disp])
-                        cv2.putText(side, f"pHash Dist={hd} SSIM={ssim_score:.3f}", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-                        cv2.imshow("ssim", side)
-                        cv2.waitKey(1)
-                    except Exception:
-                        pass
+            # 新しいマッチャークラスを使用して一致度を計算
+            score_for_smoothing = matcher.compute_similarity(frame)
 
             # EMA smoothing
             ema = alpha * score_for_smoothing + (1.0 - alpha) * ema
@@ -375,23 +310,13 @@ def analyze_segments(
 
             if writer is not None:
                 tsec = frame_idx / fps
-                if partial_match:
-                    writer.writerow([
-                        frame_idx,
-                        f"{tsec:.6f}",
-                        "" if feature_match_score is None else f"{feature_match_score:.6f}",
-                        f"{ema:.6f}",
-                        int(in_segment),
-                    ])
-                else:
-                    writer.writerow([
-                        frame_idx,
-                        f"{tsec:.6f}",
-                        hd,
-                        "" if ssim_score is None else f"{ssim_score:.6f}",
-                        f"{ema:.6f}",
-                        int(in_segment),
-                    ])
+                writer.writerow([
+                    frame_idx,
+                    f"{tsec:.6f}",
+                    f"{score_for_smoothing:.6f}",
+                    f"{ema:.6f}",
+                    int(in_segment),
+                ])
 
             frame_idx += 1
 
