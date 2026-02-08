@@ -25,6 +25,7 @@ class ORB_Matcher(Matcher):
         angle_tol: float = 15.0,
         min_good_matches: int = 4,
         match_size: int = 320,
+        visualize: bool = False,
     ):
         """
         Initialize ORB feature matcher.
@@ -44,6 +45,7 @@ class ORB_Matcher(Matcher):
         self.min_good_matches = min_good_matches
         self.match_size = (match_size, match_size//4*3)  # Maintain 4:3 aspect ratio
         self.num_good_matches = 0
+        self.visualize = visualize
     
     def set_reference(self, ref_bgr: np.ndarray) -> None:
         """
@@ -58,6 +60,7 @@ class ORB_Matcher(Matcher):
                 ref_gray = cv2.cvtColor(self.ref_bgr, cv2.COLOR_BGR2GRAY)
                 ref_gray_resized = cv2.resize(ref_gray, self.match_size, interpolation=cv2.INTER_AREA)
                 self.kp_ref, self.desc_ref = self.detector.detectAndCompute(ref_gray_resized, None)
+                self.ref_disp = cv2.resize(self.ref_bgr, self.match_size, interpolation=cv2.INTER_AREA)
             except Exception:
                 self.kp_ref = None
                 self.desc_ref = None
@@ -130,7 +133,23 @@ class ORB_Matcher(Matcher):
             # Score = inlier ratio
             inliers = np.sum(mask)
             score = float(inliers) / float(self.num_good_matches)
-            
+
+            # 可視化（マッチ表示）
+            if self.visualize:
+                try:
+                    for kp in self.kp_ref:
+                        cv2.circle(self.ref_disp, (int(kp.pt[0]), int(kp.pt[1])), 2, (0, 255, 0), -1)
+                    frame_disp = cv2.resize(frame_bgr, self.match_size, interpolation=cv2.INTER_AREA)
+                    for kp in kp_frame:
+                        cv2.circle(frame_disp, (int(kp.pt[0]), int(kp.pt[1])), 2, (0, 255, 0), -1)
+                    img_matches = cv2.drawMatches(self.ref_disp, self.kp_ref, frame_disp, kp_frame, good_matches, None, flags=2)
+                    txt = f"score={score:.3f} inliers={int(inliers)}/{len(good_matches)}"
+                    cv2.putText(img_matches, txt, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                    cv2.imshow("feature_matches", img_matches)
+                    cv2.waitKey(1)
+                except Exception:
+                    pass
+
             return score
         
         except Exception:

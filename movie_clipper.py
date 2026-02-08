@@ -201,7 +201,7 @@ def analyze_segments(
     matcher_type: str = "ssim",
     feature_threshold: float = 0.7,
     frame_skip: int = 0,
-    visual: bool = False,
+    visualize: bool = False,
     min_good_matches: int = 4,
     progress_interval_sec: float = 0.5,
 ) -> Tuple[List[Segment], float]:
@@ -220,6 +220,7 @@ def analyze_segments(
             angle_tol=15.0,
             min_good_matches=min_good_matches,
             match_size=match_size,
+            visualize=visualize,
         )
     elif matcher_type == "phash":
         # pHash マッチング
@@ -263,9 +264,6 @@ def analyze_segments(
     seg_start_frame = 0
     segs: List[Segment] = []
 
-    frame_idx = 0
-    last_frame_idx = -1
-
     # optional frame CSV
     fcsv = None
     writer = None
@@ -281,6 +279,10 @@ def analyze_segments(
             "in_segment",
         ])
 
+    frame_idx = 0
+    last_frame_idx = -1
+    proc_count = 0
+    start_time = time.time()
     last_progress_t = time.time()
     try:
         while True:
@@ -319,6 +321,7 @@ def analyze_segments(
                 ])
 
             frame_idx += 1
+            proc_count += 1
 
             # フレームスキップ: 指定数だけフレームを grab() して読み飛ばす
             if frame_skip and frame_skip > 0:
@@ -358,6 +361,9 @@ def analyze_segments(
         cap.release()
         if fcsv is not None:
             fcsv.close()
+
+    elapsed = time.time() - start_time
+    print(f"Matching done: {proc_count} frames, elapsed time {elapsed:.2f} s, {proc_count/elapsed:.2f} fps")
 
     segs = merge_segments(segs, max_gap_sec=max_gap_sec)
     return segs, fps
@@ -568,7 +574,6 @@ def main():
     parser.add_argument("--frame_csv", action="store_true", help="フレーム単位ログCSVを出力（<入力名>_frm.csv）")
     # マッチング設定
     parser.add_argument("--matcher", type=str, default="ssim", choices=["phash", "ssim", "orb"], help="マッチング手法: phash (pHashのみ), ssim (pHash+SSIM), orb (ORB特徴点) [既定値: ssim]")
-    parser.add_argument("--visual", action="store_true", help="一致計算中の処理画像を表示する（デバッグ用）")
     parser.add_argument("--match_size", type=int, default=256, help="一致度計算にリサイズするサイズ（正方形）。大きくすると精度が上がるが計算コストも増える。256〜512 程度が無難です。規定値 256")
     parser.add_argument("--match_enter", type=float, default=0.78, help="マッチ進入閾値（入る側）。この値以上で抽出区間に入る。規定値 0.78")
     parser.add_argument("--match_leave", type=float, default=0.72, help="マッチ退出閾値（出る側）。この値以下で抽出区間から出る。規定値 0.72")
@@ -577,6 +582,7 @@ def main():
     parser.add_argument("--phash_threshold", type=int, default=12, help="SSIM識別用 pHash ハミング距離閾値。大きくすると候補が増える（SSIM計算が増える）。固定カメラなら 8〜14 付近から調整が無難です。規定値 12")
     parser.add_argument("--feature_threshold", type=float, default=0.8, help="ORB特徴点マッチングの信頼度閾値（0.0～1.0）。小さくすると検出が容易になる。規定値 0.8")
     parser.add_argument("--min_good_matches", type=int, default=4, help="ORB特徴点マッチングのホモグラフィ計算に必要な最小マッチ数。4以上である必要があります。規定値 4")
+    parser.add_argument("--visualize", action="store_true", help="一致計算中の処理画像を表示する（デバッグ用）")
     # 後処理設定
     parser.add_argument("--smooth_sec", type=float, default=0.5, help="一致度の平滑化ウィンドウ時間（秒）。大きくするとノイズに強くなるが応答が遅くなる。規定値 0.5")
     parser.add_argument("--preroll_sec", type=float, default=0.2, help="抽出区間の前に追加する余裕時間（秒）。規定値 0.2")
@@ -642,9 +648,8 @@ def main():
         min_segment_sec=args.min_segment_sec,
         max_gap_sec=args.max_gap_sec,
         feature_threshold=args.feature_threshold,
-        visual=args.visual,
+        visualize=args.visualize,
         min_good_matches=args.min_good_matches,
-        # progress_interval_sec=args.progress_interval,
     )
 
     print(f"Detected segments: {len(segs)} (fps={fps:.3f})")
