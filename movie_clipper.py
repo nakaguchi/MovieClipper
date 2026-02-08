@@ -187,7 +187,6 @@ def write_segments_csv(csv_path: Path, segs: List[Segment], fps: float, params: 
 def analyze_segments(
     input_path: str,
     ref_image_path: str,
-    fps_override: float,
     phash_maxdist: int,
     ssim_size: int,
     match_enter: float,
@@ -198,7 +197,7 @@ def analyze_segments(
     min_segment_sec: float,
     max_gap_sec: float,
     frame_csv_path: Optional[Path],
-    partial_match: bool = False,
+    matcher_type: str = "ssim",
     feature_threshold: float = 0.7,
     frame_skip: int = 0,
     visual: bool = False,
@@ -211,7 +210,8 @@ def analyze_segments(
 
     # マッチャーを選択して初期化
     matcher: Matcher
-    if partial_match:
+    matcher_type = matcher_type.lower()
+    if matcher_type == "orb":
         # ORB特徴点マッチング
         matcher = ORB_Matcher(
             nfeatures=1500,
@@ -219,7 +219,12 @@ def analyze_segments(
             angle_tol=15.0,
             min_good_matches=min_good_matches,
         )
-    else:
+    elif matcher_type == "phash":
+        # pHash マッチング
+        matcher = pHash_Matcher(
+            max_hamming_dist=phash_maxdist,
+        )
+    else:  # "ssim" or default
         # pHash + SSIM マッチング
         matcher = SSIM_Matcher(
             max_hamming_dist=phash_maxdist,
@@ -234,8 +239,6 @@ def analyze_segments(
 
     # fps
     fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
-    if fps_override > 0:
-        fps = fps_override
     if fps <= 1e-6:
         probed = probe_fps_ffprobe(input_path)
         fps = probed if (probed and probed > 1e-6) else 30.0
@@ -267,22 +270,14 @@ def analyze_segments(
     if frame_csv_path is not None:
         fcsv = frame_csv_path.open("w", newline="", encoding="utf-8")
         writer = csv.writer(fcsv)
-        if partial_match:
-            writer.writerow([
-                "frame_idx",
-                "time_sec",
-                "feature_match_score",
-                "smoothed_score",
-                "in_segment",
-            ])
-        else:
-            writer.writerow([
-                "frame_idx",
-                "time_sec",
-                "similarity_score",
-                "smoothed_score",
-                "in_segment",
-            ])
+        score_label = "feature_match_score" if matcher_type.lower() == "orb" else "similarity_score"
+        writer.writerow([
+            "frame_idx",
+            "time_sec",
+            score_label,
+            "smoothed_score",
+            "in_segment",
+        ])
 
     last_progress_t = time.time()
     try:
@@ -563,55 +558,47 @@ def export_with_ffmpeg(
 
 
 def main():
+    # コマンドライン引数解析
     parser = argparse.ArgumentParser()
-
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-
+    # 入力/出力設定
     parser.add_argument("input", help="入力動画ファイル")
     parser.add_argument("--ref", default="", help="参照フレーム画像（省略時: 入力拡張子を .jpg に置換）")
     parser.add_argument("--output", default="", help="出力 mp4（省略時: 入力に応じて自動決定）")
-
+    parser.add_argument("--frame_skip", type=int, default=1, help="各処理フレームの後にスキップするフレーム数（0で無効）。例: 2 は各処理後に2フレームをスキップ）")
     parser.add_argument("--segment_csv", action="store_true", help="抽出区間CSVを出力（<入力名>_seg.csv）")
     parser.add_argument("--frame_csv", action="store_true", help="フレーム単位ログCSVを出力（<入力名>_frm.csv）")
-
-    parser.add_argument("--phash_maxdist", type=int, default=20, help="pHash ハミング距離閾値。大きくすると候補が増える（SSIM計算が増える）。固定カメラなら 8〜14 付近から調整が無難です。規定値 12")
-    parser.add_argument("--ssim_size", type=int, default=256, help="SSIM 計算用にリサイズするサイズ（正方形）。大きくすると精度が上がるが計算コストも増える。256〜512 程度が無難です。規定値 256")
+    # マッチング設定
+    parser.add_argument("--matcher", type=str, default="ssim", choices=["phash", "ssim", "orb"], help="マッチング手法: phash (pHashのみ), ssim (pHash+SSIM), orb (ORB特徴点) [既定値: ssim]")
+    parser.add_argument("--visual", action="store_true", help="一致計算中の処理画像を表示する（デバッグ用）")
+    parser.add_argument("--progress_interval", type=float, default=0.2, help="解析進捗表示の間隔（秒）")
+    parser.add_argument("--match_size", type=int, default=256, help="一致度計算にリサイズするサイズ（正方形）。大きくすると精度が上がるが計算コストも増える。256〜512 程度が無難です。規定値 256")
     parser.add_argument("--match_enter", type=float, default=0.78, help="マッチ進入閾値（入る側）。この値以上で抽出区間に入る。規定値 0.78")
     parser.add_argument("--match_leave", type=float, default=0.72, help="マッチ退出閾値（出る側）。この値以下で抽出区間から出る。規定値 0.72")
-
-    parser.add_argument("--smooth_sec", type=float, default=0.5, help="SSIM スコアの平滑化ウィンドウ時間（秒）。大きくするとノイズに強くなるが応答が遅くなる。規定値 0.5")
+    # マッチャー固有設定
+    parser.add_argument("--phash_ubound", type=int, default=50, help="pHash識別用 ハミング距離閾値の上限。規定値 50")
+    parser.add_argument("--phash_threshold", type=int, default=12, help="SSIM識別用 pHash ハミング距離閾値。大きくすると候補が増える（SSIM計算が増える）。固定カメラなら 8〜14 付近から調整が無難です。規定値 12")
+    parser.add_argument("--feature_threshold", type=float, default=0.8, help="ORB特徴点マッチングの信頼度閾値（0.0～1.0）。小さくすると検出が容易になる。規定値 0.8")
+    parser.add_argument("--min_good_matches", type=int, default=4, help="ORB特徴点マッチングのホモグラフィ計算に必要な最小マッチ数。4以上である必要があります。規定値 4")
+    # 後処理設定
+    parser.add_argument("--smooth_sec", type=float, default=0.5, help="一致度の平滑化ウィンドウ時間（秒）。大きくするとノイズに強くなるが応答が遅くなる。規定値 0.5")
     parser.add_argument("--preroll_sec", type=float, default=0.2, help="抽出区間の前に追加する余裕時間（秒）。規定値 0.2")
     parser.add_argument("--postroll_sec", type=float, default=0.2, help="抽出区間の後に追加する余裕時間（秒）。規定値 0.2")
     parser.add_argument("--min_segment_sec", type=float, default=0.3, help="抽出区間の最小長さ（秒）。これ未満の区間は破棄される。規定値 0.3")
     parser.add_argument("--max_gap_sec", type=float, default=0.15, help="抽出区間の結合最大ギャップ時間（秒）。これ以下のギャップは結合される。規定値 0.15")
-
-    parser.add_argument("--fps", type=float, default=0.0, help="入力動画のFPSを強制指定（0.0で自動検出）規定値 0.0")
+    # 出力設定
     parser.add_argument("--bitrate", default="2000k", help="出力動画のビットレート設定（libx264）。例: 5000k, 8000k など。値が大きいほど高品質・大容量。一般的には3000k〜10000k程度が無難です。規定値 2000k")
     parser.add_argument("--preset", default="medium", help="出力動画のエンコードプリセット（libx264）。品質には影響しないが、速度と圧縮率に影響する。ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow から選択。規定値 medium")
     parser.add_argument("--audio_bitrate", default="192k", help="出力音声ビットレート（AAC）。規定値 192k")
-
     parser.add_argument("--no_deinterlace", action="store_true", help="デインターレース処理を無効化（デフォルトでは有効）")
     parser.add_argument("--yadif_args", default="mode=send_frame:parity=auto:deint=all", help="yadif フィルタの引数（デインターレース有効時）規定値 mode=send_frame:parity=auto:deint=all")
-
-    parser.add_argument("--progress_interval", type=float, default=0.2, help="解析進捗表示の間隔（秒）")
-
-    parser.add_argument("--visual", action="store_true", help="一致計算中の処理画像を表示する（デバッグ用）")
-
-    parser.add_argument("--frame_skip", type=int, default=1, help="各処理フレームの後にスキップするフレーム数（0で無効）。例: 2 は各処理後に2フレームをスキップ）")
-
-    parser.add_argument("--partial_match", action="store_true", help="部分一致モード: 参照フレームが入力フレーム内の一部に含まれる場合を検出（特徴点マッチング使用）")
-    parser.add_argument("--feature_threshold", type=float, default=0.8, help="特徴点マッチングの信頼度閾値（0.0～1.0）。小さくすると検出が容易になる。規定値 0.7")
-    parser.add_argument("--min_good_matches", type=int, default=15, help="ホモグラフィ計算に必要な最小マッチ数。4以上である必要があります。規定値 4")
-
     args = parser.parse_args()
 
-    deinterlace = not args.no_deinterlace
-
+    # 入力/出力パス設定
     in_path = Path(args.input)
-
-    # defaults derived from input
     ref_path = Path(args.ref) if args.ref else replace_suffix(in_path, ".jpg")
-
+    if not ref_path.exists():
+        raise FileNotFoundError(f"参照画像が見つかりません: {ref_path}（--ref で指定可能）")
     # Output default with condition:
     # - if input is mp4 => <no suffix>_out.mp4
     # - else => replace suffix to .mp4
@@ -622,20 +609,17 @@ def main():
             out_path = Path(str(in_path.with_suffix("")) + "_out.mp4")
         else:
             out_path = replace_suffix(in_path, ".mp4")
+    for exec_name in ["ffmpeg", "ffprobe"]:
+        if not find_executable(exec_name):
+            raise RuntimeError(f"{exec_name} が見つかりません。PATH を確認してください。")
+
+    deinterlace = not args.no_deinterlace
+    input_duration = probe_duration_ffprobe(str(in_path))  # for ffmpeg progress denominator
 
     # CSV paths = remove suffix then add _seg.csv / _frm.csv
     stem_no_suffix = in_path.with_suffix("")
     seg_csv_path = (Path(str(stem_no_suffix) + "_seg.csv")) if args.segment_csv else None
     frm_csv_path = (Path(str(stem_no_suffix) + "_frm.csv")) if args.frame_csv else None
-
-    if not ref_path.exists():
-        raise FileNotFoundError(f"参照画像が見つかりません: {ref_path}（--ref で指定可能）")
-
-    for exec_name in ["ffmpeg", "ffprobe"]:
-        if not find_executable(exec_name):
-            raise RuntimeError(f"{exec_name} が見つかりません。PATH を確認してください。")
-
-    input_duration = probe_duration_ffprobe(str(in_path))  # for ffmpeg progress denominator
 
     print(f"Input : {in_path}")
     print(f"Ref   : {ref_path}")
@@ -646,13 +630,11 @@ def main():
         print(f"FrmCSV: {frm_csv_path}")
     if input_duration:
         print(f"Duration (ffprobe): {input_duration:.2f}s")
-    if args.partial_match:
-        print(f"Mode: PARTIAL MATCH (feature-based detection)")
+    print(f"Matcher: {args.matcher.upper()}")
 
     segs, fps = analyze_segments(
         input_path=str(in_path),
         ref_image_path=str(ref_path),
-        fps_override=args.fps,
         phash_maxdist=args.phash_maxdist,
         ssim_size=args.ssim_size,
         match_enter=args.match_enter,
@@ -663,7 +645,7 @@ def main():
         min_segment_sec=args.min_segment_sec,
         max_gap_sec=args.max_gap_sec,
         frame_csv_path=frm_csv_path,
-        partial_match=args.partial_match,
+        matcher_type=args.matcher,
         feature_threshold=args.feature_threshold,
         frame_skip=args.frame_skip,
         visual=args.visual,
@@ -675,9 +657,9 @@ def main():
 
     if seg_csv_path is not None:
         params = {
-            "partial_match": args.partial_match,
-            "feature_threshold": args.feature_threshold if args.partial_match else "",
-            "phash_maxdist": args.phash_maxdist if not args.partial_match else "",
+            "matcher": args.matcher,
+            "feature_threshold": args.feature_threshold if args.matcher == "orb" else "",
+            "phash_maxdist": args.phash_maxdist if args.matcher != "orb" else "",
             "match_enter": args.match_enter,
             "match_leave": args.match_leave,
             "smooth_sec": args.smooth_sec,
