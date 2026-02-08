@@ -51,18 +51,18 @@ class SSIM_Matcher(Matcher):
     3. Combined similarity = max(pHash-based, SSIM-based) * SSIM score
     """
     
-    def __init__(self, max_hamming_dist: int = 20, ssim_size: int = 256):
+    def __init__(self, hd_threshold: int = 20, ssim_size: int = 256):
         """
         Initialize SSIM matcher.
         
         Args:
-            max_hamming_dist: Maximum pHash Hamming distance threshold
+            hd_threshold: pHash Hamming distance threshold
             ssim_size: Size for SSIM computation (square)
         """
         super().__init__()
         self.ref_hash = None
         self.ref_ssim_gray = None
-        self.max_hamming_dist = max_hamming_dist
+        self.hd_threshold = hd_threshold
         self.ssim_size = ssim_size
     
     def set_reference(self, ref_bgr: np.ndarray) -> None:
@@ -93,10 +93,10 @@ class SSIM_Matcher(Matcher):
         try:
             # Step 1: pHash filtering
             frame_hash = phash_64(frame_bgr)
-            hd = hamming_distance_64(frame_hash, self.ref_hash)
+            self.hamming_distance = hamming_distance_64(frame_hash, self.ref_hash)
             
             # If pHash distance is too large, return low score
-            if hd > self.max_hamming_dist:
+            if self.hamming_distance > self.hd_threshold:
                 return 0.0
             
             # Step 2: SSIM computation (only if pHash passes)
@@ -107,7 +107,7 @@ class SSIM_Matcher(Matcher):
             ssim_normalized = max(0.0, min(1.0, (ssim_score + 1.0) / 2.0))
             
             # Combine: heavily weighted on SSIM, with slight boost for good pHash match
-            phash_score = 1.0 - (hd / 64.0)
+            phash_score = 1.0 - (self.hamming_distance / 64.0)
             combined = 0.9 * ssim_normalized + 0.1 * phash_score
             
             return min(1.0, combined)

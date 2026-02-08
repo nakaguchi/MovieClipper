@@ -16,7 +16,7 @@ class Matcher(ABC):
     
     def __init__(self):
         """Initialize the matcher."""
-        pass
+        self.hamming_distance = None
     
     @abstractmethod
     def compute_similarity(self, frame_bgr: np.ndarray) -> float:

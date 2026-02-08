@@ -187,8 +187,9 @@ def write_segments_csv(csv_path: Path, segs: List[Segment], fps: float, params: 
 def analyze_segments(
     input_path: str,
     ref_image_path: str,
-    phash_maxdist: int,
-    ssim_size: int,
+    phash_ubound: int,
+    phash_threshold: int,
+    match_size: int,
     match_enter: float,
     match_leave: float,
     smooth_sec: float,
@@ -202,7 +203,7 @@ def analyze_segments(
     frame_skip: int = 0,
     visual: bool = False,
     min_good_matches: int = 4,
-    progress_interval_sec: float = 0.2,
+    progress_interval_sec: float = 0.5,
 ) -> Tuple[List[Segment], float]:
     ref_bgr = cv2.imread(ref_image_path, cv2.IMREAD_COLOR)
     if ref_bgr is None:
@@ -218,17 +219,18 @@ def analyze_segments(
             feature_threshold=feature_threshold,
             angle_tol=15.0,
             min_good_matches=min_good_matches,
+            match_size=match_size,
         )
     elif matcher_type == "phash":
         # pHash マッチング
         matcher = pHash_Matcher(
-            max_hamming_dist=phash_maxdist,
+            hamming_dist_ubound=phash_ubound,
         )
     else:  # "ssim" or default
         # pHash + SSIM マッチング
         matcher = SSIM_Matcher(
-            max_hamming_dist=phash_maxdist,
-            ssim_size=ssim_size,
+            hd_threshold=phash_threshold,
+            ssim_size=match_size,
         )
     
     matcher.set_reference(ref_bgr)
@@ -270,11 +272,11 @@ def analyze_segments(
     if frame_csv_path is not None:
         fcsv = frame_csv_path.open("w", newline="", encoding="utf-8")
         writer = csv.writer(fcsv)
-        score_label = "feature_match_score" if matcher_type.lower() == "orb" else "similarity_score"
         writer.writerow([
             "frame_idx",
             "time_sec",
-            score_label,
+            "num_matches" if matcher_type == "orb" else "pHash_hd",
+            matcher_type+ "_score",
             "smoothed_score",
             "in_segment",
         ])
@@ -310,6 +312,7 @@ def analyze_segments(
                 writer.writerow([
                     frame_idx,
                     f"{tsec:.6f}",
+                    f"{matcher.num_good_matches if hasattr(matcher, 'num_good_matches') else matcher.hamming_distance}",
                     f"{score_for_smoothing:.6f}",
                     f"{ema:.6f}",
                     int(in_segment),
@@ -329,16 +332,17 @@ def analyze_segments(
             now = time.time()
             if (now - last_progress_t) >= progress_interval_sec:
                 if total_frames > 0:
-                    print("\r" + render_progress(frame_idx, total_frames) + f" (analyze {frame_idx}/{total_frames})",
-                          end="", flush=True)
+                    print("\r" + render_progress(frame_idx, total_frames) + \
+                            f" (analyze {frame_idx}/{total_frames})", end="", flush=True)
                 else:
                     print("\r" + render_progress(frame_idx, None) + f" (analyze {frame_idx})",
-                          end="", flush=True)
+                            end="", flush=True)
                 last_progress_t = now
 
         # finalize progress line
         if total_frames > 0:
-            print("\r" + render_progress(frame_idx, total_frames) + f" (analyze {frame_idx}/{total_frames})")
+            print("\r" + render_progress(frame_idx, total_frames) + \
+                    f" (analyze {frame_idx}/{total_frames})")
         else:
             print("\r" + render_progress(frame_idx, None) + f" (analyze {frame_idx})")
 
@@ -451,18 +455,13 @@ def export_with_ffmpeg(
     total_duration_sec: Optional[float],
 ):
     exec = find_executable("ffmpeg")
-    if not exec:
-        raise RuntimeError("ffmpeg が見つかりません。PATH を確認してください。")
-
     if not segs:
         raise RuntimeError("抽出区間が0件です（閾値が厳しすぎる可能性があります）。")
-
-    audio_present = has_audio_stream(input_path)
-
     segs = [s for s in segs if (s.end - s.start) > 1e-3]
     if not segs:
         raise RuntimeError("有効な抽出区間がありません（全て end<=start です）。")
 
+    audio_present = has_audio_stream(input_path)
     parts: List[str] = []
     n = len(segs)
 
@@ -489,23 +488,21 @@ def export_with_ffmpeg(
         parts.append(f"{concat_inputs}concat=n={n}:v=1:a=0[vout]")
 
     filter_complex = ";".join(parts)
-
     # フィルタコンプレックスが長い場合、テンポラリファイルに保存して -filter_complex_script で渡す
     # これによりコマンドライン長制限を回避できる
-    use_filter_script = len(filter_complex) > 4000
-
+    # use_filter_script = len(filter_complex) > 4000
     filter_script_file = None
     try:
-        if use_filter_script:
-            # テンポラリファイルにフィルタを書き込む
-            fd, filter_script_file = tempfile.mkstemp(suffix=".txt", prefix="ffmpeg_filter_", text=True)
-            # print(f"Using temporary filter script file: {filter_script_file}")
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    f.write(filter_complex)
-            except:
-                os.close(fd)
-                raise
+        # if use_filter_script:
+        # テンポラリファイルにフィルタを書き込む
+        fd, filter_script_file = tempfile.mkstemp(suffix=".txt", prefix="ffmpeg_filter_", text=True)
+        # print(f"Using temporary filter script file: {filter_script_file}")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(filter_complex)
+        except:
+            os.close(fd)
+            raise
 
         cmd = [
             exec,
@@ -514,10 +511,11 @@ def export_with_ffmpeg(
         ]
 
         # フィルタをコマンドに追加（方法1: スクリプトファイル、方法2: 直接）
-        if use_filter_script:
-            cmd += ["-filter_complex_script", filter_script_file]
-        else:
-            cmd += ["-filter_complex", filter_complex]
+        cmd += ["-filter_complex_script", filter_script_file]
+        # if use_filter_script:
+        #     cmd += ["-filter_complex_script", filter_script_file]
+        # else:
+        #     cmd += ["-filter_complex", filter_complex]
 
         cmd += [
             "-map", "[vout]",
@@ -571,7 +569,6 @@ def main():
     # マッチング設定
     parser.add_argument("--matcher", type=str, default="ssim", choices=["phash", "ssim", "orb"], help="マッチング手法: phash (pHashのみ), ssim (pHash+SSIM), orb (ORB特徴点) [既定値: ssim]")
     parser.add_argument("--visual", action="store_true", help="一致計算中の処理画像を表示する（デバッグ用）")
-    parser.add_argument("--progress_interval", type=float, default=0.2, help="解析進捗表示の間隔（秒）")
     parser.add_argument("--match_size", type=int, default=256, help="一致度計算にリサイズするサイズ（正方形）。大きくすると精度が上がるが計算コストも増える。256〜512 程度が無難です。規定値 256")
     parser.add_argument("--match_enter", type=float, default=0.78, help="マッチ進入閾値（入る側）。この値以上で抽出区間に入る。規定値 0.78")
     parser.add_argument("--match_leave", type=float, default=0.72, help="マッチ退出閾値（出る側）。この値以下で抽出区間から出る。規定値 0.72")
@@ -599,9 +596,6 @@ def main():
     ref_path = Path(args.ref) if args.ref else replace_suffix(in_path, ".jpg")
     if not ref_path.exists():
         raise FileNotFoundError(f"参照画像が見つかりません: {ref_path}（--ref で指定可能）")
-    # Output default with condition:
-    # - if input is mp4 => <no suffix>_out.mp4
-    # - else => replace suffix to .mp4
     if args.output:
         out_path = Path(args.output)
     else:
@@ -613,14 +607,12 @@ def main():
         if not find_executable(exec_name):
             raise RuntimeError(f"{exec_name} が見つかりません。PATH を確認してください。")
 
-    deinterlace = not args.no_deinterlace
-    input_duration = probe_duration_ffprobe(str(in_path))  # for ffmpeg progress denominator
-
     # CSV paths = remove suffix then add _seg.csv / _frm.csv
     stem_no_suffix = in_path.with_suffix("")
     seg_csv_path = (Path(str(stem_no_suffix) + "_seg.csv")) if args.segment_csv else None
     frm_csv_path = (Path(str(stem_no_suffix) + "_frm.csv")) if args.frame_csv else None
 
+    # 処理条件の表示
     print(f"Input : {in_path}")
     print(f"Ref   : {ref_path}")
     print(f"Output: {out_path}")
@@ -628,6 +620,7 @@ def main():
         print(f"SegCSV: {seg_csv_path}")
     if frm_csv_path:
         print(f"FrmCSV: {frm_csv_path}")
+    input_duration = probe_duration_ffprobe(str(in_path))  # for ffmpeg progress denominator
     if input_duration:
         print(f"Duration (ffprobe): {input_duration:.2f}s")
     print(f"Matcher: {args.matcher.upper()}")
@@ -635,8 +628,12 @@ def main():
     segs, fps = analyze_segments(
         input_path=str(in_path),
         ref_image_path=str(ref_path),
-        phash_maxdist=args.phash_maxdist,
-        ssim_size=args.ssim_size,
+        frame_csv_path=frm_csv_path,
+        frame_skip=args.frame_skip,
+        matcher_type=args.matcher,
+        phash_ubound=args.phash_ubound,
+        phash_threshold=args.phash_threshold,
+        match_size=args.match_size,
         match_enter=args.match_enter,
         match_leave=args.match_leave,
         smooth_sec=args.smooth_sec,
@@ -644,13 +641,10 @@ def main():
         postroll_sec=args.postroll_sec,
         min_segment_sec=args.min_segment_sec,
         max_gap_sec=args.max_gap_sec,
-        frame_csv_path=frm_csv_path,
-        matcher_type=args.matcher,
         feature_threshold=args.feature_threshold,
-        frame_skip=args.frame_skip,
         visual=args.visual,
         min_good_matches=args.min_good_matches,
-        progress_interval_sec=args.progress_interval,
+        # progress_interval_sec=args.progress_interval,
     )
 
     print(f"Detected segments: {len(segs)} (fps={fps:.3f})")
@@ -667,8 +661,8 @@ def main():
             "postroll_sec": args.postroll_sec,
             "min_segment_sec": args.min_segment_sec,
             "max_gap_sec": args.max_gap_sec,
-            "deinterlace": deinterlace,
-            "yadif_args": args.yadif_args if deinterlace else "",
+            "deinterlace": not args.no_deinterlace,
+            "yadif_args": args.yadif_args if not args.no_deinterlace else "",
             "bitrate": args.bitrate,
             "preset": args.preset,
             "audio_bitrate": args.audio_bitrate,
@@ -686,7 +680,7 @@ def main():
         bitrate=args.bitrate,
         preset=args.preset,
         audio_bitrate=args.audio_bitrate,
-        deinterlace=deinterlace,
+        deinterlace=not args.no_deinterlace,
         yadif_args=args.yadif_args,
         total_duration_sec=expected_out_duration,  # ← input_duration ではなくこちら
     )

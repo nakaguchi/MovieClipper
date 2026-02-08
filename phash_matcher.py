@@ -64,17 +64,17 @@ class pHash_Matcher(Matcher):
     Similarity = 1.0 - (hamming_distance / 64.0)
     """
     
-    def __init__(self, max_hamming_dist: int = 100):
+    def __init__(self, hamming_dist_ubound: int = 50):
         """
         Initialize pHash matcher.
         
         Args:
-            max_hamming_dist: Maximum hamming distance to consider as match.
-                             Distances above this threshold result in similarity 0.0.
+            hamming_dist_ubound: Maximum hamming distance to consider as match.
+                            Distances above this threshold result in similarity 0.0.
         """
         super().__init__()
         self.ref_hash = None
-        self.max_hamming_dist = max_hamming_dist
+        self.hamming_dist_ubound = hamming_dist_ubound
     
     def set_reference(self, ref_bgr: np.ndarray) -> None:
         """
@@ -102,11 +102,11 @@ class pHash_Matcher(Matcher):
         
         try:
             frame_hash = phash_64(frame_bgr)
-            hd = min(hamming_distance_64(frame_hash, self.ref_hash), self.max_hamming_dist)
+            self.hamming_distance = min(hamming_distance_64(frame_hash, self.ref_hash), \
+                                        self.hamming_dist_ubound)
             
             # Normalize to [0, 1]: 1.0 = perfect match (distance 0)
-            similarity = 1.0 - (hd / self.max_hamming_dist)
+            similarity = 1.0 - (self.hamming_distance / self.hamming_dist_ubound)
             return similarity
         except Exception:
             return 0.0
-    

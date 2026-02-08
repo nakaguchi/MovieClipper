@@ -9,9 +9,6 @@ import numpy as np
 
 from matcher_base import Matcher
 
-# Feature matching resize size
-FM_SIZE = (320, 240)
-
 
 class ORB_Matcher(Matcher):
     """
@@ -27,6 +24,7 @@ class ORB_Matcher(Matcher):
         feature_threshold: float = 0.7,
         angle_tol: float = 15.0,
         min_good_matches: int = 4,
+        match_size: int = 320,
     ):
         """
         Initialize ORB feature matcher.
@@ -44,6 +42,8 @@ class ORB_Matcher(Matcher):
         self.feature_threshold = feature_threshold
         self.angle_tol = angle_tol
         self.min_good_matches = min_good_matches
+        self.match_size = (match_size, match_size//4*3)  # Maintain 4:3 aspect ratio
+        self.num_good_matches = 0
     
     def set_reference(self, ref_bgr: np.ndarray) -> None:
         """
@@ -56,7 +56,7 @@ class ORB_Matcher(Matcher):
         if self.ref_bgr is not None:
             try:
                 ref_gray = cv2.cvtColor(self.ref_bgr, cv2.COLOR_BGR2GRAY)
-                ref_gray_resized = cv2.resize(ref_gray, FM_SIZE, interpolation=cv2.INTER_AREA)
+                ref_gray_resized = cv2.resize(ref_gray, self.match_size, interpolation=cv2.INTER_AREA)
                 self.kp_ref, self.desc_ref = self.detector.detectAndCompute(ref_gray_resized, None)
             except Exception:
                 self.kp_ref = None
@@ -81,7 +81,7 @@ class ORB_Matcher(Matcher):
         try:
             # Detect features in frame
             frame_gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-            frame_gray_resized = cv2.resize(frame_gray, FM_SIZE, interpolation=cv2.INTER_AREA)
+            frame_gray_resized = cv2.resize(frame_gray, self.match_size, interpolation=cv2.INTER_AREA)
             
             kp_frame, desc_frame = self.detector.detectAndCompute(frame_gray_resized, None)
             
@@ -114,7 +114,8 @@ class ORB_Matcher(Matcher):
                 good_matches = filtered
             
             # Check minimum matches for homography
-            if len(good_matches) < self.min_good_matches:
+            self.num_good_matches = len(good_matches)
+            if self.num_good_matches < self.min_good_matches:
                 return 0.0
             
             # Compute homography via RANSAC
@@ -128,7 +129,7 @@ class ORB_Matcher(Matcher):
             
             # Score = inlier ratio
             inliers = np.sum(mask)
-            score = float(inliers) / float(len(good_matches))
+            score = float(inliers) / float(self.num_good_matches)
             
             return score
         
