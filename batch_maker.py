@@ -305,6 +305,9 @@ class MovieClipperGUI:
                 if not output_name:
                     eg.popup_error("エラー", "保存ファイル名を入力してください")
                     continue
+                if not output_name.endswith(".mp4"):
+                    output_name += ".mp4"
+                output_name = Path(self.video_path).parent / output_name
 
                 if self.start_frame is None or self.end_frame is None:
                     eg.popup_error("エラー", "選択範囲が設定されていません")
@@ -313,10 +316,13 @@ class MovieClipperGUI:
                 try:
                     start_time = self.start_frame / self.fps if self.fps > 0 else 0.0
                     end_time = self.end_frame / self.fps if self.fps > 0 else 0.0
-                    input_name = self.video_path
+                    ref_name = "D:\\usr\\DL\\video\\AO2026\\AO2026_court.jpg"
                     batch_path = Path.cwd() / "batch.ps1"
-                    with open(batch_path, "a", encoding="utf-8") as bf:
-                        bf.write(f'movie_clipper.exe "{input_name}" --output "{output_name}" {start_time:.3f} {end_time:.3f}\n')
+                    with open(batch_path, "a", encoding="utf-8-sig") as bf:
+                        bf.write(f'python.exe movie_clipper.py "{self.video_path}" --output "{output_name}" ' \
+                                    + f'--ref "{ref_name}" --frame_skip 1 ' \
+                                    + f'--matcher phash --match_enter 0.6 --match_leave 0.5 ' \
+                                    + f'--start {start_time:.3f} --end {end_time:.3f}\n')
                     eg.popup("保存完了", f"{batch_path} に追記しました")
                 except Exception as e:
                     eg.popup_error("エラー", f"バッチ保存に失敗しました: {e}")

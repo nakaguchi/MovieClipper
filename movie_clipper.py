@@ -365,7 +365,7 @@ def analyze_segments(
                 if total_for_progress and total_for_progress > 0:
                     processed = frame_idx - start_frame
                     print("\r" + render_progress(processed, total_for_progress) + \
-                            f" (analyze {frame_idx})", end="", flush=True)
+                            f" (analyze {processed}/{total_for_progress})", end="", flush=True)
                 else:
                     print("\r" + render_progress(frame_idx, None) + f" (analyze {frame_idx})",
                             end="", flush=True)
@@ -374,7 +374,8 @@ def analyze_segments(
         # finalize progress line
         if total_for_progress and total_for_progress > 0:
             processed = frame_idx - start_frame
-            print("\r" + render_progress(processed, total_for_progress) + f" (analyze {frame_idx})")
+            print("\r" + render_progress(processed, total_for_progress) \
+                    + f" (analyze {processed}/{total_for_progress})")
         else:
             print("\r" + render_progress(frame_idx, None) + f" (analyze {frame_idx})")
 
@@ -411,7 +412,7 @@ def run_ffmpeg_with_progress(cmd: List[str], total_duration_sec: Optional[float]
         cmd = cmd[:-1] + ["-progress", "pipe:1", "-nostats"] + cmd[-1:]
 
     # print(f"Running ffmpeg command: {' '.join(cmd)}")
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding="utf-8", text=True, bufsize=1)
 
     last_print_t = time.time()
     out_time_ms = 0
