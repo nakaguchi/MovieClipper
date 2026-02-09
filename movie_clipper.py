@@ -227,6 +227,7 @@ def analyze_segments(
         # pHash マッチング
         matcher = pHash_Matcher(
             hamming_dist_ubound=phash_ubound,
+            visualize=visualize,
         )
     else:  # "ssim" or default
         # pHash + SSIM マッチング

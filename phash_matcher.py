@@ -64,7 +64,10 @@ class pHash_Matcher(Matcher):
     Similarity = 1.0 - (hamming_distance / 64.0)
     """
     
-    def __init__(self, hamming_dist_ubound: int = 50):
+    def __init__(self, 
+                    hamming_dist_ubound: int = 50, 
+                    visualize: bool = False, 
+                    match_size: int = 640):
         """
         Initialize pHash matcher.
         
@@ -75,6 +78,8 @@ class pHash_Matcher(Matcher):
         super().__init__()
         self.ref_hash = None
         self.hamming_dist_ubound = hamming_dist_ubound
+        self.visualize = visualize
+        self.match_size = (match_size, match_size//4*3)  # Maintain 4:3 aspect ratio
     
     def set_reference(self, ref_bgr: np.ndarray) -> None:
         """
@@ -86,6 +91,7 @@ class pHash_Matcher(Matcher):
         super().set_reference(ref_bgr)
         if self.ref_bgr is not None:
             self.ref_hash = phash_64(self.ref_bgr)
+            self.ref_disp = cv2.resize(self.ref_bgr, self.match_size, interpolation=cv2.INTER_AREA)
     
     def compute_similarity(self, frame_bgr: np.ndarray) -> float:
         """
@@ -107,6 +113,20 @@ class pHash_Matcher(Matcher):
             
             # Normalize to [0, 1]: 1.0 = perfect match (distance 0)
             similarity = 1.0 - (self.hamming_distance / self.hamming_dist_ubound)
+
+            # 可視化（マッチ表示）
+            if self.visualize:
+                try:
+                    frame_disp = cv2.resize(frame_bgr, self.match_size, interpolation=cv2.INTER_AREA)
+                    txt = f"hamming_distance={self.hamming_distance}, similarity={similarity:.3f}"
+                    cv2.putText(frame_disp, txt, (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                    # 参照画像とフレームを横並びで結合
+                    combined = cv2.hconcat([self.ref_disp, frame_disp])
+                    cv2.imshow("feature_matches", combined)
+                    cv2.waitKey(1)
+                except Exception:
+                    pass
+
             return similarity
         except Exception:
             return 0.0
