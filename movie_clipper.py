@@ -17,7 +17,6 @@ from typing import List, Tuple, Optional, Dict
 import cv2
 import numpy as np
 
-from feature_matcher import match_template_by_features, FM_SIZE
 from matcher_base import Matcher
 from orb_matcher import ORB_Matcher
 from ssim_matcher import SSIM_Matcher
@@ -204,6 +203,8 @@ def analyze_segments(
     visualize: bool = False,
     min_good_matches: int = 4,
     progress_interval_sec: float = 0.5,
+    start_sec: Optional[float] = None,
+    end_sec: Optional[float] = None,
 ) -> Tuple[List[Segment], float]:
     ref_bgr = cv2.imread(ref_image_path, cv2.IMREAD_COLOR)
     if ref_bgr is None:
@@ -252,6 +253,22 @@ def analyze_segments(
         dur = probe_duration_ffprobe(input_path)
         total_frames = int(round(dur * fps)) if dur is not None else 0
 
+    # determine start/end frames (optional)
+    start_frame = 0
+    end_frame = (total_frames - 1) if total_frames > 0 else None
+    if start_sec is not None and start_sec > 0:
+        start_frame = max(0, int(round(start_sec * fps)))
+    if end_sec is not None and end_sec > 0:
+        ef = int(round(end_sec * fps))
+        if end_frame is None:
+            end_frame = ef
+        else:
+            end_frame = min(end_frame, ef)
+
+    # seek to start frame if needed
+    if start_frame > 0:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+
     preroll_frames = max(0, int(round(preroll_sec * fps)))
     postroll_frames = max(0, int(round(postroll_sec * fps)))
 
@@ -279,11 +296,18 @@ def analyze_segments(
             "in_segment",
         ])
 
-    frame_idx = 0
+    frame_idx = start_frame
     last_frame_idx = -1
     proc_count = 0
     start_time = time.time()
     last_progress_t = time.time()
+    
+    # progress total uses the clipped range when available
+    total_for_progress: Optional[int]
+    if (end_frame is not None) and (end_frame >= start_frame):
+        total_for_progress = end_frame - start_frame + 1
+    else:
+        total_for_progress = total_frames if total_frames > 0 else None
     try:
         while True:
             ok, frame = cap.read()
@@ -320,6 +344,10 @@ def analyze_segments(
                     int(in_segment),
                 ])
 
+            # check if we've reached the end frame
+            if (end_frame is not None) and (frame_idx >= end_frame):
+                break
+
             frame_idx += 1
             proc_count += 1
 
@@ -334,18 +362,19 @@ def analyze_segments(
             # progress
             now = time.time()
             if (now - last_progress_t) >= progress_interval_sec:
-                if total_frames > 0:
-                    print("\r" + render_progress(frame_idx, total_frames) + \
-                            f" (analyze {frame_idx}/{total_frames})", end="", flush=True)
+                if total_for_progress and total_for_progress > 0:
+                    processed = frame_idx - start_frame
+                    print("\r" + render_progress(processed, total_for_progress) + \
+                            f" (analyze {frame_idx})", end="", flush=True)
                 else:
                     print("\r" + render_progress(frame_idx, None) + f" (analyze {frame_idx})",
                             end="", flush=True)
                 last_progress_t = now
 
         # finalize progress line
-        if total_frames > 0:
-            print("\r" + render_progress(frame_idx, total_frames) + \
-                    f" (analyze {frame_idx}/{total_frames})")
+        if total_for_progress and total_for_progress > 0:
+            processed = frame_idx - start_frame
+            print("\r" + render_progress(processed, total_for_progress) + f" (analyze {frame_idx})")
         else:
             print("\r" + render_progress(frame_idx, None) + f" (analyze {frame_idx})")
 
@@ -569,6 +598,8 @@ def main():
     parser.add_argument("input", help="入力動画ファイル")
     parser.add_argument("--ref", default="", help="参照フレーム画像（省略時: 入力拡張子を .jpg に置換）")
     parser.add_argument("--output", default="", help="出力 mp4（省略時: 入力に応じて自動決定）")
+    parser.add_argument("--start", type=float, default=None, help="処理開始時間（秒）。省略または0で先頭から）")
+    parser.add_argument("--end", type=float, default=None, help="処理終了時間（秒）。省略で最後まで処理）")
     parser.add_argument("--frame_skip", type=int, default=1, help="各処理フレームの後にスキップするフレーム数（0で無効）。例: 2 は各処理後に2フレームをスキップ）")
     parser.add_argument("--segment_csv", action="store_true", help="抽出区間CSVを出力（<入力名>_seg.csv）")
     parser.add_argument("--frame_csv", action="store_true", help="フレーム単位ログCSVを出力（<入力名>_frm.csv）")
@@ -637,6 +668,8 @@ def main():
         frame_csv_path=frm_csv_path,
         frame_skip=args.frame_skip,
         matcher_type=args.matcher,
+        start_sec=args.start,
+        end_sec=args.end,
         phash_ubound=args.phash_ubound,
         phash_threshold=args.phash_threshold,
         match_size=args.match_size,
