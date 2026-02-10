@@ -321,7 +321,8 @@ class MovieClipperGUI:
                     with open(batch_path, "a", encoding="utf-8-sig") as bf:
                         bf.write(f'python.exe movie_clipper.py "{self.video_path}" --output "{output_name}" ' \
                                     + f'--ref "{ref_name}" --frame_skip 1 ' \
-                                    + f'--matcher phash --match_enter 0.6 --match_leave 0.5 ' \
+                                    # + f'--matcher phash --match_enter 0.6 --match_leave 0.5 ' \
+                                    + f'--matcher orb --feature_threshold 0.8 --min_good_matches 15 ' \
                                     + f'--start {start_time:.3f} --end {end_time:.3f}\n')
                     eg.popup("保存完了", f"{batch_path} に追記しました")
                 except Exception as e:

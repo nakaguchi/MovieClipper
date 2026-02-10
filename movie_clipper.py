@@ -53,7 +53,7 @@ def find_executable(name: str) -> Optional[str]:
 
 
 def run_cmd(cmd: List[str]) -> Tuple[int, str]:
-    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding='utf-8', text=True)
     return p.returncode, p.stdout
 
 
@@ -598,7 +598,7 @@ def main():
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     # 入力/出力設定
     parser.add_argument("input", help="入力動画ファイル")
-    parser.add_argument("--ref", default="", help="参照フレーム画像（省略時: 入力拡張子を .jpg に置換）")
+    parser.add_argument("--ref_file", default="", help="参照フレーム画像（省略時: 入力拡張子を .jpg に置換）")
     parser.add_argument("--output", default="", help="出力 mp4（省略時: 入力に応じて自動決定）")
     parser.add_argument("--start", type=float, default=None, help="処理開始時間（秒）。省略または0で先頭から）")
     parser.add_argument("--end", type=float, default=None, help="処理終了時間（秒）。省略で最後まで処理）")
@@ -632,9 +632,9 @@ def main():
 
     # 入力/出力パス設定
     in_path = Path(args.input)
-    ref_path = Path(args.ref) if args.ref else replace_suffix(in_path, ".jpg")
+    ref_path = Path(args.ref_file) if args.ref_file else replace_suffix(in_path, ".jpg")
     if not ref_path.exists():
-        raise FileNotFoundError(f"参照画像が見つかりません: {ref_path}（--ref で指定可能）")
+        raise FileNotFoundError(f"参照画像が見つかりません: {ref_path}（--ref_file で指定可能）")
     if args.output:
         out_path = Path(args.output)
     else:
@@ -647,7 +647,7 @@ def main():
             raise RuntimeError(f"{exec_name} が見つかりません。PATH を確認してください。")
 
     # CSV paths = remove suffix then add _seg.csv / _frm.csv
-    stem_no_suffix = in_path.with_suffix("")
+    stem_no_suffix = out_path.with_suffix("")
     seg_csv_path = (Path(str(stem_no_suffix) + "_seg.csv")) if args.segment_csv else None
     frm_csv_path = (Path(str(stem_no_suffix) + "_frm.csv")) if args.frame_csv else None
 
