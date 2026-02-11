@@ -205,11 +205,9 @@ def analyze_segments(
     progress_interval_sec: float = 0.5,
     start_sec: Optional[float] = None,
     end_sec: Optional[float] = None,
+    ref_time: Optional[float] = None,
 ) -> Tuple[List[Segment], float]:
-    ref_bgr = cv2.imread(ref_image_path, cv2.IMREAD_COLOR)
-    if ref_bgr is None:
-        raise FileNotFoundError(f"参照画像を読み込めません: {ref_image_path}")
-
+    
     # マッチャーを選択して初期化
     matcher: Matcher
     matcher_type = matcher_type.lower()
@@ -236,11 +234,24 @@ def analyze_segments(
             ssim_size=match_size,
         )
     
-    matcher.set_reference(ref_bgr)
 
+    # 動画オープン
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
         raise FileNotFoundError(f"入力動画を開けません: {input_path}")
+
+    # 参照画像読み込み
+    if ref_time is not None:
+        # 動画から参照フレームを抽出
+        cap.set(cv2.CAP_PROP_POS_MSEC, ref_time * 1000.0)
+        ok, ref_bgr = cap.read()
+        if not ok:
+            raise FileNotFoundError(f"参照フレームを抽出できません: {input_path} at time {ref_time}")
+    else:
+        ref_bgr = cv2.imread(ref_image_path, cv2.IMREAD_COLOR)
+        if ref_bgr is None:
+            raise FileNotFoundError(f"参照画像を読み込めません: {ref_image_path}")
+    matcher.set_reference(ref_bgr)
 
     # fps
     fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
@@ -599,6 +610,7 @@ def main():
     # 入力/出力設定
     parser.add_argument("input", help="入力動画ファイル")
     parser.add_argument("--ref_file", default="", help="参照フレーム画像（省略時: 入力拡張子を .jpg に置換）")
+    parser.add_argument("--ref_time", type=float, default=None, help="参照フレーム時間（秒）。省略時: 不使用）")
     parser.add_argument("--output", default="", help="出力 mp4（省略時: 入力に応じて自動決定）")
     parser.add_argument("--start", type=float, default=None, help="処理開始時間（秒）。省略または0で先頭から）")
     parser.add_argument("--end", type=float, default=None, help="処理終了時間（秒）。省略で最後まで処理）")
@@ -632,9 +644,10 @@ def main():
 
     # 入力/出力パス設定
     in_path = Path(args.input)
-    ref_path = Path(args.ref_file) if args.ref_file else replace_suffix(in_path, ".jpg")
-    if not ref_path.exists():
-        raise FileNotFoundError(f"参照画像が見つかりません: {ref_path}（--ref_file で指定可能）")
+    if args.ref_time is None and not args.ref_file:
+        ref_path = Path(args.ref_file) if args.ref_file else replace_suffix(in_path, ".jpg")
+        if not ref_path.exists():
+            raise FileNotFoundError(f"参照画像が見つかりません: {ref_path}（--ref_file で指定可能）")
     if args.output:
         out_path = Path(args.output)
     else:
@@ -653,7 +666,7 @@ def main():
 
     # 処理条件の表示
     print(f"Input : {in_path}")
-    print(f"Ref   : {ref_path}")
+    print(f"Ref_time: {args.ref_time}" if args.ref_time is not None else f"Ref_file: {ref_path}")
     print(f"Output: {out_path}")
     if seg_csv_path:
         print(f"SegCSV: {seg_csv_path}")
@@ -666,7 +679,8 @@ def main():
 
     segs, fps = analyze_segments(
         input_path=str(in_path),
-        ref_image_path=str(ref_path),
+        ref_image_path=str(ref_path) if args.ref_time is None else "",
+        ref_time=args.ref_time,
         frame_csv_path=frm_csv_path,
         frame_skip=args.frame_skip,
         matcher_type=args.matcher,

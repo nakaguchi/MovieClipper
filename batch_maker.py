@@ -31,6 +31,7 @@ class MovieClipperGUI:
         self.current_frame = 0
         self.start_frame = None  # 選択範囲の開始フレーム
         self.end_frame = None    # 選択範囲の終了フレーム
+        self.ref_frame = None   # 参照フレーム画像
         
         # ウィンドウレイアウト定義
         self.layout = [
@@ -60,6 +61,7 @@ class MovieClipperGUI:
                 eg.Button("開始点を設定", size=(15, 1)),
                 eg.Button("終了点を設定", size=(15, 1)),
                 eg.Button("選択をクリア", size=(15, 1)),
+                eg.Button("参照フレームを設定", size=(15, 1)),
                 eg.Text("", key="-TIME_INFO-", size=(30, 1)),
             ],
             [
@@ -206,7 +208,13 @@ class MovieClipperGUI:
             current_pixel = int((self.current_frame / max(1, self.total_frames)) * bar_width)
             current_pixel = max(0, min(current_pixel, bar_width - 1))
             frame_array[-bar_height:, current_pixel] = [255, 0, 0]  # 赤色
-            
+
+            # 参照フレームを青色で表示
+            if self.ref_frame is not None:
+                ref_pixel = int((self.ref_frame / max(1, self.total_frames)) * bar_width)
+                ref_pixel = max(0, min(ref_pixel, bar_width - 1))
+                frame_array[-bar_height:, ref_pixel] = [0, 0, 255]  # 青色
+
             frame_resized = frame_array
         
         pil_image = Image.fromarray(frame_resized)
@@ -222,6 +230,9 @@ class MovieClipperGUI:
         current_time = self.current_frame / self.fps if self.fps > 0 else 0
         total_time = self.total_frames / self.fps if self.fps > 0 else 0
         time_str = self.format_time(current_time) + " / " + self.format_time(total_time)
+        if self.ref_frame:
+            ref_time = self.ref_frame / self.fps if self.fps > 0 else 0
+            time_str += f"　参照フレーム: {self.format_time(ref_time)}"
         self.window["-TIME_INFO-"].update(time_str)
     
     
@@ -292,6 +303,12 @@ class MovieClipperGUI:
             elif event == "選択をクリア":
                 self.start_frame = 0
                 self.end_frame = self.total_frames - 1
+                self.ref_frame = None
+                self.display_frame()
+                self.update_info()
+
+            elif event == "参照フレームを設定":
+                self.ref_frame = self.current_frame
                 self.display_frame()
                 self.update_info()
 
@@ -316,11 +333,12 @@ class MovieClipperGUI:
                 try:
                     start_time = self.start_frame / self.fps if self.fps > 0 else 0.0
                     end_time = self.end_frame / self.fps if self.fps > 0 else 0.0
-                    ref_name = "D:\\usr\\DL\\video\\AO2026\\AO2026_court.jpg"
+                    ref_info = f'--ref_time {self.ref_frame / self.fps} ' if self.ref_frame \
+                        else f'--ref "D:\\usr\\DL\\video\\AO2026\\AO2026_court.jpg" '
                     batch_path = Path.cwd() / "batch.ps1"
                     with open(batch_path, "a", encoding="utf-8-sig") as bf:
                         bf.write(f'python.exe movie_clipper.py "{self.video_path}" --output "{output_name}" ' \
-                                    + f'--ref "{ref_name}" --frame_skip 1 ' \
+                                    + '--frame_skip 1 ' + ref_info \
                                     # + f'--matcher phash --match_enter 0.6 --match_leave 0.5 ' \
                                     + f'--matcher orb --feature_threshold 0.8 --min_good_matches 15 ' \
                                     + f'--start {start_time:.3f} --end {end_time:.3f}\n')
