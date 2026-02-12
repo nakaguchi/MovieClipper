@@ -71,6 +71,7 @@ class MovieClipperGUI:
             [
                 eg.Text("出力ファイル名:", size=(12, 1)),
                 eg.Input("AO2026_", key="-SAVE_NAME-", size=(40, 1), expand_x=True),
+                eg.Checkbox("バイナリ実行", default=True, key="-USE_BINARY-"),
                 eg.Button("バッチ保存", size=(15, 1), background_color="lightblue"),
             ],
         ]
@@ -148,6 +149,7 @@ class MovieClipperGUI:
         self.start_frame = 0
         self.end_frame = self.total_frames - 1
         self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame)
+        self.ref_frame = None
         
         # ファイル名を表示
         filename = Path(filepath).name
@@ -335,9 +337,10 @@ class MovieClipperGUI:
                     end_time = self.end_frame / self.fps if self.fps > 0 else 0.0
                     ref_info = f'--ref_time {self.ref_frame / self.fps} ' if self.ref_frame \
                         else f'--ref "D:\\usr\\DL\\video\\AO2026\\AO2026_court.jpg" '
+                    exec_cmd = "./movie_clipper.exe" if values.get("-USE_BINARY-", False) else "python.exe movie_clipper.py"
                     batch_path = Path.cwd() / "batch.ps1"
                     with open(batch_path, "a", encoding="utf-8-sig") as bf:
-                        bf.write(f'python.exe movie_clipper.py "{self.video_path}" --output "{output_name}" ' \
+                        bf.write(f'{exec_cmd} "{self.video_path}" --output "{output_name}" ' \
                                     + '--frame_skip 1 ' + ref_info \
                                     # + f'--matcher phash --match_enter 0.6 --match_leave 0.5 ' \
                                     + f'--matcher orb --feature_threshold 0.8 --min_good_matches 15 ' \
@@ -360,3 +363,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
