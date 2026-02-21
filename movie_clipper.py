@@ -513,27 +513,39 @@ def export_with_ffmpeg(
     parts: List[str] = []
     n = len(segs)
 
-    for i, s in enumerate(segs):
-        v_filters = [f"trim=start={s.start:.6f}:end={s.end:.6f}"]
-        if deinterlace:
-            v_filters.append(f"yadif={yadif_args}")
-        v_filters.append("setpts=PTS-STARTPTS")
-        parts.append(f"[0:v]{','.join(v_filters)}[v{i}]")
-
-        if audio_present:
-            parts.append(
-                f"[0:a]atrim=start={s.start:.6f}:end={s.end:.6f},"
-                f"asetpts=PTS-STARTPTS,"
-                f"aformat=sample_fmts=fltp:channel_layouts=stereo,"
-                f"aresample=48000[a{i}]"
-            )
+    # 多数セグメントでもフィルタグラフが爆発しないよう、
+    # trim/atrim+concat の代わりに select/aselect でまとめて抽出する。
+    # これによりフィルタノード数を一定に保ち、セグメント数が増えても
+    # オーバーヘッドを抑えられる。
+    v_select_expr = "+".join(
+        [f"between(t,{s.start:.6f},{s.end:.6f})" for s in segs]
+    )
 
     if audio_present:
-        concat_inputs = "".join([f"[v{i}][a{i}]" for i in range(n)])
-        parts.append(f"{concat_inputs}concat=n={n}:v=1:a=1[vout][aout]")
-    else:
-        concat_inputs = "".join([f"[v{i}]" for i in range(n)])
-        parts.append(f"{concat_inputs}concat=n={n}:v=1:a=0[vout]")
+        a_select_expr = "+".join(
+            [f"between(t,{s.start:.6f},{s.end:.6f})" for s in segs]
+        )
+
+    # 映像フィルタ
+    # select で飛び飛びの時刻を選ぶため、setpts=PTS-STARTPTS だとセグメント間の
+    # 抜けた時間が PTS の隙間になり再生でフリーズする。連続 PTS にするため
+    # N/(FRAME_RATE*TB) でフレーム番号ベースの PTS にし直す。
+    v_chain = [f"[0:v]select='{v_select_expr}'"]
+    if deinterlace:
+        v_chain.append(f"yadif={yadif_args}")
+    v_chain.append("setpts=N/(FRAME_RATE*TB)")
+    parts.append(f"{','.join(v_chain)}[vout]")
+
+    # 音声フィルタ
+    # 映像と同様、aselect 後の PTS を連続にするため N/SR/TB でサンプル番号ベースに。
+    if audio_present:
+        a_chain = [
+            f"[0:a]aselect='{a_select_expr}'",
+            "asetpts=N/SR/TB",
+            "aformat=sample_fmts=fltp:channel_layouts=stereo",
+            "aresample=48000",
+        ]
+        parts.append(f"{','.join(a_chain)}[aout]")
 
     filter_complex = ";".join(parts)
     # フィルタコンプレックスが長い場合、テンポラリファイルに保存して -filter_complex_script で渡す
