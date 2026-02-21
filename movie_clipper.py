@@ -23,7 +23,7 @@ from ssim_matcher import SSIM_Matcher
 from phash_matcher import pHash_Matcher
 
 # Version
-__version__ = "1.3"
+__version__ = "1.4"
 
 # -----------------------------
 # small helpers
