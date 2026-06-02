@@ -70,7 +70,7 @@ class MovieClipperGUI:
             ],
             [
                 eg.Text("出力ファイル名:", size=(12, 1)),
-                eg.Input("AO2026_", key="-SAVE_NAME-", size=(40, 1), expand_x=True),
+                eg.Input("FO2026_", key="-SAVE_NAME-", size=(40, 1), expand_x=True),
                 eg.Checkbox("バイナリ実行", default=True, key="-USE_BINARY-"),
                 eg.Button("バッチ保存", size=(15, 1), background_color="lightblue"),
             ],
@@ -232,7 +232,7 @@ class MovieClipperGUI:
         current_time = self.current_frame / self.fps if self.fps > 0 else 0
         total_time = self.total_frames / self.fps if self.fps > 0 else 0
         time_str = self.format_time(current_time) + " / " + self.format_time(total_time)
-        if self.ref_frame:
+        if self.ref_frame is not None:
             ref_time = self.ref_frame / self.fps if self.fps > 0 else 0
             time_str += f"　参照フレーム: {self.format_time(ref_time)}"
         self.window["-TIME_INFO-"].update(time_str)
@@ -317,26 +317,29 @@ class MovieClipperGUI:
             elif event == "バッチ保存":
                 # 入力ファイル名と出力名、選択範囲の開始/終了時間を batch.txt に追記
                 if not self.video_path:
-                    eg.popup_error("エラー", "動画が読み込まれていません")
+                    eg.popup_error(title="エラー", message="動画が読み込まれていません")
                     continue
 
                 output_name = values.get("-SAVE_NAME-", "").strip()
                 if not output_name:
-                    eg.popup_error("エラー", "保存ファイル名を入力してください")
+                    eg.popup_error(title="エラー", message="保存ファイル名を入力してください")
                     continue
                 if not output_name.endswith(".mp4"):
                     output_name += ".mp4"
                 output_name = Path(self.video_path).parent / output_name
 
                 if self.start_frame is None or self.end_frame is None:
-                    eg.popup_error("エラー", "選択範囲が設定されていません")
+                    eg.popup_error(title="エラー", message="選択範囲が設定されていません")
+                    continue
+
+                if self.ref_frame is None:
+                    eg.popup(title="警告", message="参照フレームが設定されていません。先に「参照フレームを設定」を押してください")
                     continue
 
                 try:
                     start_time = self.start_frame / self.fps if self.fps > 0 else 0.0
                     end_time = self.end_frame / self.fps if self.fps > 0 else 0.0
-                    ref_info = f'--ref_time {self.ref_frame / self.fps} ' if self.ref_frame \
-                        else f'--ref "D:\\usr\\DL\\video\\AO2026\\AO2026_court.jpg" '
+                    ref_info = f'--ref_time {self.ref_frame / self.fps} '
                     exec_cmd = "./movie_clipper.exe" if values.get("-USE_BINARY-", False) else "python.exe movie_clipper.py"
                     batch_path = Path.cwd() / "batch.ps1"
                     with open(batch_path, "a", encoding="utf-8-sig") as bf:
@@ -345,9 +348,9 @@ class MovieClipperGUI:
                                     # + f'--matcher phash --match_enter 0.6 --match_leave 0.5 ' \
                                     + f'--matcher orb --feature_threshold 0.8 --min_good_matches 15 ' \
                                     + f'--start {start_time:.3f} --end {end_time:.3f}\n')
-                    eg.popup("保存完了", f"{batch_path} に追記しました")
+                    eg.popup(title="保存完了", message=f"{batch_path} に追記しました")
                 except Exception as e:
-                    eg.popup_error("エラー", f"バッチ保存に失敗しました: {e}")
+                    eg.popup_error(title="エラー", message=f"バッチ保存に失敗しました: {e}")
         
         # クリーンアップ
         if self.cap:
